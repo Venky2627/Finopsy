@@ -10,8 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.demo import demo_transactions
 from app.financial import analyze_transactions
-from app.models import QuickAddRequest, Transaction, TransactionSource, Category, ParseStatementResponse, FinancialSummary, DemoResponse
+from app.models import QuickAddRequest, Transaction, TransactionSource, Category, ParseStatementResponse, FinancialSummary, DemoResponse, UserProfileUpdate
 from app.categorization.rules import categorize_merchant
+from app.auth import get_current_user
+from app.supabase_client import get_supabase, get_admin_supabase
+from fastapi import Depends, HTTPException
+
 from app.parsers.statement import parse_statement
 
 # 1. Logging setup
@@ -44,6 +48,27 @@ async def log_requests(request: Request, call_next: Callable):
             status_code=500,
             content={"error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred."}}
         )
+
+from fastapi.exceptions import RequestValidationError
+from fastapi import status
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    # If detail is already in our error format, use it directly
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    # Otherwise wrap it
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}}
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"error": {"code": "VALIDATION_ERROR", "message": str(exc)}}
+    )
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
@@ -92,3 +117,102 @@ async def upload_statement(file: UploadFile = File(...)):
             status_code=400,
             content={"error": {"code": "INVALID_FILE", "message": "The uploaded statement could not be parsed."}}
         )
+
+@app.get("/api/me")
+def get_me(user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    res = supabase.table('profiles').select('*').eq('id', user['id']).execute()
+    if res.data:
+        return res.data[0]
+    return {"id": user['id'], "email": user.get('email')}
+
+@app.patch("/api/me")
+def update_me(update: UserProfileUpdate, user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    update_data = update.model_dump(exclude_unset=True)
+    if not update_data:
+        return {"status": "no changes"}
+    res = supabase.table('profiles').update(update_data).eq('id', user['id']).execute()
+    if res.data:
+        return res.data[0]
+    # If not found, insert
+    update_data['id'] = user['id']
+    res = supabase.table('profiles').insert(update_data).execute()
+    return res.data[0]
+
+@app.delete("/api/me")
+def delete_me(user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    # delete all transactions
+    supabase.table('transactions').delete().eq('user_id', user['id']).execute()
+    # delete profile
+    supabase.table('profiles').delete().eq('id', user['id']).execute()
+    
+    # Also delete user from auth
+    admin_supabase = get_admin_supabase()
+    admin_supabase.auth.admin.delete_user(user['id'])
+    
+    return {"status": "deleted"}
+
+@app.get("/api/transactions")
+def get_transactions(user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    res = supabase.table('transactions').select('*').eq('user_id', user['id']).execute()
+    return res.data
+
+@app.post("/api/transactions")
+def create_transactions(transactions: list[Transaction], user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    data = []
+    for t in transactions:
+        t_dict = t.model_dump(mode="json")
+        t_dict['user_id'] = user['id']
+        data.append(t_dict)
+    if not data:
+        return []
+    res = supabase.table('transactions').insert(data).execute()
+    return res.data
+
+@app.patch("/api/transactions/{id}")
+def update_transaction(id: str, update: dict, user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    res = supabase.table('transactions').update(update).eq('id', id).eq('user_id', user['id']).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Transaction not found"}})
+    return res.data[0]
+
+@app.delete("/api/transactions/{id}")
+def delete_transaction(id: str, user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    res = supabase.table('transactions').delete().eq('id', id).eq('user_id', user['id']).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Transaction not found"}})
+    return {"status": "deleted"}
+
+@app.delete("/api/transactions")
+def delete_all_transactions(user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    res = supabase.table('transactions').delete().eq('user_id', user['id']).execute()
+    return {"status": "deleted"}
+
+@app.post("/api/transactions/migrate")
+def migrate_transactions(transactions: list[Transaction], user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    data = []
+    for t in transactions:
+        t_dict = t.model_dump(mode="json")
+        t_dict['user_id'] = user['id']
+        data.append(t_dict)
+    if not data:
+        return []
+    res = supabase.table('transactions').insert(data).execute()
+    return {"migrated": len(data)}
+
+@app.get("/api/username/check")
+def check_username(username: str):
+    admin_supabase = get_admin_supabase()
+    res = admin_supabase.table('profiles').select('username').eq('username', username).execute()
+    if res.data:
+        return {"available": False}
+    return {"available": True}
+

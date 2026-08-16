@@ -75,3 +75,7 @@ class FinancialSummary(BaseModel):
 class DemoResponse(BaseModel):
     transactions: list[Transaction]
     summary: FinancialSummary
+
+class UserProfileUpdate(BaseModel):
+    username: str | None = None
+    display_name: str | None = None

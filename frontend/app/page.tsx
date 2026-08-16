@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { fetchDemo, quickAdd, analyzeTransactions, uploadStatement } from "./api";
+import { fetchDemo, quickAdd, analyzeTransactions, uploadStatement, getTransactions, saveTransactions, migrateTransactions, deleteTransaction } from "./api";
+import { useAuth } from "./contexts/AuthContext";
+import { AuthModal } from "./components/AuthModal";
+import { UsernameOnboarding } from "./components/UsernameOnboarding";
+import { SettingsModal } from "./components/SettingsModal";
 import { toPng } from "html-to-image";
 import { ShareCard } from "./components/ShareCard";
 
@@ -36,7 +40,7 @@ const ROASTS: Record<string, string> = {
   Other: "We don't even know what this is, but your wallet felt it.",
 };
 
-type ViewState = "landing" | "quick-add" | "confirmation" | "upload-loading" | "review-upload" | "dashboard";
+type ViewState = "landing" | "quick-add" | "confirmation" | "upload-loading" | "review-upload" | "dashboard" | "settings";
 
 export default function Home() {
   const [view, setView] = useState<ViewState>("landing");
@@ -44,6 +48,59 @@ export default function Home() {
   const [summary, setSummary] = useState<any | null>(null);
   const [isDemoData, setIsDemoData] = useState<boolean>(false);
   const [lastAddedTransaction, setLastAddedTransaction] = useState<any | null>(null);
+
+  const { user, profile, isAuthenticated, signOut, session, isLoading: authLoading } = useAuth();
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isUsernameOnboardingOpen, setIsUsernameOnboardingOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated && profile && !profile.username && !authLoading) {
+      setIsUsernameOnboardingOpen(true);
+    } else {
+      setIsUsernameOnboardingOpen(false);
+    }
+  }, [isAuthenticated, profile, authLoading]);
+
+  useEffect(() => {
+    const fetchAuthTxns = async () => {
+      if (isAuthenticated && session) {
+        try {
+          const txns = await getTransactions(session.access_token);
+          setTransactions(txns);
+          await reAnalyze(txns);
+          setIsDemoData(false);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
+    if (isAuthenticated && view === "dashboard") {
+      fetchAuthTxns();
+    }
+  }, [isAuthenticated, session, view]);
+
+  useEffect(() => {
+    const doMigrate = async () => {
+      if (isAuthenticated && session && transactions.length > 0 && !isDemoData) {
+        const hasLocalOnly = transactions.some(t => !t.user_id);
+        if (hasLocalOnly) {
+          try {
+            await migrateTransactions(session.access_token, transactions.filter(t => !t.user_id));
+            const fresh = await getTransactions(session.access_token);
+            setTransactions(fresh);
+            await reAnalyze(fresh);
+          } catch(e) {
+            console.error("Migration failed", e);
+          }
+        }
+      }
+    };
+    if (isAuthenticated) {
+      doMigrate();
+      setIsAuthModalOpen(false);
+    }
+  }, [isAuthenticated, session]);
 
   // Upload State
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -175,12 +232,18 @@ export default function Home() {
   };
 
   const handleConfirmUpload = async () => {
-    // If it was demo data, we replace it. If it was real data, we append.
     let updatedTxns = pendingUploadTransactions;
     if (!isDemoData && transactions.length > 0) {
       updatedTxns = [...transactions, ...pendingUploadTransactions];
     }
     
+    if (isAuthenticated && session) {
+      try {
+        const saved = await saveTransactions(session.access_token, pendingUploadTransactions);
+        updatedTxns = !isDemoData && transactions.length > 0 ? [...transactions, ...saved] : saved;
+      } catch (e) { console.error(e); }
+    }
+
     setIsDemoData(false);
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
@@ -215,7 +278,14 @@ export default function Home() {
   };
 
   const handleConfirmQuickAdd = async () => {
-    const updatedTxns = [...transactions, lastAddedTransaction];
+    let finalTxn = lastAddedTransaction;
+    if (isAuthenticated && session) {
+       try {
+         const savedList = await saveTransactions(session.access_token, [lastAddedTransaction]);
+         finalTxn = savedList[0];
+       } catch (e) {}
+    }
+    const updatedTxns = [...transactions, finalTxn];
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
     setAmount(""); setMerchant(""); setCategory("Other"); setLastAddedTransaction(null);
@@ -224,7 +294,14 @@ export default function Home() {
   };
 
   const handleAddAnother = async () => {
-    const updatedTxns = [...transactions, lastAddedTransaction];
+    let finalTxn = lastAddedTransaction;
+    if (isAuthenticated && session) {
+       try {
+         const savedList = await saveTransactions(session.access_token, [lastAddedTransaction]);
+         finalTxn = savedList[0];
+       } catch (e) {}
+    }
+    const updatedTxns = [...transactions, finalTxn];
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
     setAmount(""); setMerchant(""); setCategory("Other"); setLastAddedTransaction(null);
@@ -238,6 +315,9 @@ export default function Home() {
   };
 
   const handleDeleteTransaction = async (id: string) => {
+    if (isAuthenticated && session && id) {
+      try { await deleteTransaction(session.access_token, id); } catch(e) { console.error(e); }
+    }
     const updatedTxns = transactions.filter(t => t.id !== id);
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
@@ -374,6 +454,7 @@ export default function Home() {
               moneyPersonality={sharePersonality}
               roast={shareRoast}
               transactionCount={summary.transaction_count}
+              username={profile?.username || undefined}
             />
           )}
         </div>
@@ -384,8 +465,27 @@ export default function Home() {
 
       {/* Header */}
       <nav className="mx-auto flex max-w-6xl items-center justify-between">
-        <button onClick={handleReset} className="text-xl font-black tracking-tight">FINOPSY</button>
-        <span className="rounded-full border border-[#f6f3e833] px-3 py-1 text-xs text-[#c9c6ba]">No bank login. No BS.</span>
+        <button 
+          onClick={() => {
+            if (isAuthenticated && transactions.length > 0) navigate("dashboard");
+            else navigate("landing");
+          }} 
+          className="text-xl font-black tracking-tight hover:text-[#d5ff51] transition"
+        >
+          FINOPSY
+        </button>
+        <div className="flex items-center gap-4">
+          {!isAuthenticated && <span className="hidden sm:inline rounded-full border border-[#f6f3e833] px-3 py-1 text-xs text-[#c9c6ba]">No bank login. No BS.</span>}
+          {isAuthenticated ? (
+            <button onClick={() => setIsSettingsOpen(true)} className="rounded-full border border-[#f6f3e833] px-4 py-1 text-sm font-bold text-[#c9c6ba] hover:text-[#d5ff51] hover:border-[#d5ff51] transition">
+              {profile?.username ? `@${profile.username}` : "Settings"} ⚙️
+            </button>
+          ) : (
+            <button onClick={() => setIsAuthModalOpen(true)} className="rounded-full border border-[#f6f3e833] px-4 py-1 text-sm font-bold text-[#c9c6ba] hover:text-[#d5ff51] hover:border-[#d5ff51] transition">
+              Log In
+            </button>
+          )}
+        </div>
       </nav>
 
       {view === "landing" && (
@@ -399,6 +499,11 @@ export default function Home() {
                 {loading ? "Loading..." : "Try Demo Autopsy →"}
               </button>
               
+              {!isAuthenticated && transactions.length > 0 && !isDemoData && (
+                <button onClick={() => setIsAuthModalOpen(true)} className="rounded-full bg-white px-5 py-2 text-sm font-bold text-[#10110f] hover:bg-[#d5ff51] transition animate-pulse">
+                  Save My Autopsy
+                </button>
+              )}
               <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="rounded-full border border-[#f6f3e855] px-5 py-3 font-bold hover:bg-[#f6f3e811]">
                 Upload Statement
               </button>
@@ -686,6 +791,9 @@ export default function Home() {
           </div>
         </div>
       )}
+      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      {isUsernameOnboardingOpen && <UsernameOnboarding />}
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </main>
   );
 }

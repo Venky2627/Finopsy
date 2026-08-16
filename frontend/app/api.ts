@@ -84,3 +84,91 @@ export async function uploadStatement(file: File): Promise<ParseStatementRespons
   }
   return res.json();
 }
+export interface Profile {
+  id: string;
+  username?: string | null;
+  display_name?: string | null;
+  created_at: string;
+}
+
+function getAuthHeaders(token: string) {
+  return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+export async function getProfile(token: string): Promise<Profile> {
+  const res = await fetch(`${API_URL}/api/me`, { headers: getAuthHeaders(token) });
+  if (!res.ok) throw new Error("Failed to get profile");
+  return res.json();
+}
+
+export async function updateProfile(token: string, data: {username?: string, display_name?: string}): Promise<Profile> {
+  const res = await fetch(`${API_URL}/api/me`, {
+    method: "PATCH",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error("Failed to update profile");
+  return res.json();
+}
+
+export async function deleteAccount(token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/me`, { method: "DELETE", headers: getAuthHeaders(token) });
+  if (!res.ok) throw new Error("Failed to delete account");
+}
+
+export async function getTransactions(token: string): Promise<Transaction[]> {
+  const res = await fetch(`${API_URL}/api/transactions`, { headers: getAuthHeaders(token) });
+  if (!res.ok) throw new Error("Failed to get transactions");
+  return res.json();
+}
+
+export async function saveTransactions(token: string, transactions: Transaction[]): Promise<Transaction[]> {
+  const res = await fetch(`${API_URL}/api/transactions/bulk`, {
+    method: "POST",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(transactions)
+  });
+  if (!res.ok) throw new Error("Failed to save transactions");
+  return res.json();
+}
+
+export async function migrateTransactions(token: string, transactions: any[]): Promise<void> {
+  const res = await fetch(`${API_URL}/api/transactions/migrate`, {
+    method: "POST",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify({ transactions })
+  });
+  if (!res.ok) throw new Error("Failed to migrate transactions");
+}
+
+export async function updateTransaction(token: string, id: string, data: Partial<Transaction>): Promise<Transaction> {
+  const res = await fetch(`${API_URL}/api/transactions/${id}`, {
+    method: "PATCH",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error("Failed to update transaction");
+  return res.json();
+}
+
+export async function deleteTransaction(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/transactions/${id}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(token)
+  });
+  if (!res.ok) throw new Error("Failed to delete transaction");
+}
+
+export async function deleteAllTransactions(token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/transactions`, {
+    method: "DELETE",
+    headers: getAuthHeaders(token)
+  });
+  if (!res.ok) throw new Error("Failed to delete all transactions");
+}
+
+export async function checkUsername(username: string): Promise<{available: boolean}> {
+  const res = await fetch(`${API_URL}/api/users/check-username?username=${encodeURIComponent(username)}`);
+  if (!res.ok) throw new Error("Failed to check username");
+  return res.json();
+}

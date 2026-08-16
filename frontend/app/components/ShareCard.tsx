@@ -6,6 +6,7 @@ export interface ShareCardProps {
   moneyPersonality: string;
   roast: string;
   transactionCount: number;
+  username?: string;
 }
 
 export const ShareCard: React.FC<ShareCardProps> = ({
@@ -14,6 +15,7 @@ export const ShareCard: React.FC<ShareCardProps> = ({
   moneyPersonality,
   roast,
   transactionCount,
+  username,
 }) => {
   const formattedTotal = new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -50,7 +52,7 @@ export const ShareCard: React.FC<ShareCardProps> = ({
             FINOPSY
           </h2>
           <p style={{ fontSize: '20px', fontWeight: 700, margin: '4px 0 0 0', color: '#d5ff51', letterSpacing: '0.2em' }}>
-            MONEY AUTOPSY
+            {username ? `@${username.toUpperCase()}'S MONEY AUTOPSY` : "MONEY AUTOPSY"}
           </p>
         </div>
         

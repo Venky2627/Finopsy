@@ -70,9 +70,10 @@ export async function analyzeTransactions(transactions: any[]): Promise<Financia
   return res.json();
 }
 
-export async function uploadStatement(file: File): Promise<ParseStatementResponse> {
+export async function uploadStatement(file: File, password?: string): Promise<ParseStatementResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  if (password) formData.append("password", password);
   
   const res = await fetch(`${API_URL}/api/upload-statement`, {
     method: "POST",
@@ -80,6 +81,9 @@ export async function uploadStatement(file: File): Promise<ParseStatementRespons
   });
   if (!res.ok) {
      const data = await res.json().catch(() => null);
+     if (data?.error?.code === "PDF_ENCRYPTED") {
+       throw new Error("PDF_ENCRYPTED");
+     }
      throw new Error(data?.error?.message || "Failed to upload statement");
   }
   return res.json();

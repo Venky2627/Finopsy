@@ -6,20 +6,24 @@ from typing import List
 from app.models import Transaction, TransactionSource, TransactionType, ParseStatementResponse
 from app.categorization.rules import categorize_merchant
 
-def parse_statement(file_bytes: bytes, filename: str) -> ParseStatementResponse:
+def parse_statement(file_bytes: bytes, filename: str, password: str | None = None) -> ParseStatementResponse:
     transactions: List[Transaction] = []
     warnings: List[str] = []
     
     is_csv = filename.lower().endswith('.csv')
     is_excel = filename.lower().endswith(('.xlsx', '.xls'))
+    is_pdf = filename.lower().endswith('.pdf')
     
-    if not (is_csv or is_excel):
-        warnings.append("Unsupported file type. Expected .csv or .xlsx")
+    if not (is_csv or is_excel or is_pdf):
+        warnings.append("Unsupported file type. Expected .csv, .xlsx, or .pdf")
         return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
     
     try:
+        if is_pdf:
+            from app.parsers.pdf_parser import extract_pdf_tables
+            df_raw = extract_pdf_tables(file_bytes, password)
         # Force a large number of columns to handle jagged junk rows at the top of statements
-        if is_csv:
+        elif is_csv:
             df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str, names=range(30), engine='python')
         else:
             df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str, names=range(30))

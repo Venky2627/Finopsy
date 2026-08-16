@@ -107,6 +107,9 @@ export default function Home() {
   const [pendingUploadTransactions, setPendingUploadTransactions] = useState<any[]>([]);
   const [uploadMetadata, setUploadMetadata] = useState<any | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pdfPasswordRequired, setPdfPasswordRequired] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [pendingPdfFile, setPendingPdfFile] = useState<File | null>(null);
 
   // Form State
   const [amount, setAmount] = useState("");
@@ -196,14 +199,22 @@ export default function Home() {
   };
 
   // -- UPLOAD PIPELINE --
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList | null } }) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
     setUploadError(null);
+    setPdfPasswordRequired(false);
+    setPdfPassword("");
+    setPendingPdfFile(file);
     navigate("upload-loading");
+    
+    await processUpload(file);
+  };
+
+  const processUpload = async (file: File, password?: string) => {
     try {
-      const result = await uploadStatement(file);
+      const result = await uploadStatement(file, password);
       setPendingUploadTransactions(result.transactions);
       setUploadMetadata({
         total_rows: result.total_rows,
@@ -211,12 +222,25 @@ export default function Home() {
         skipped_rows: result.skipped_rows,
         warnings: result.warnings,
       });
+      setPendingPdfFile(null);
+      setPdfPasswordRequired(false);
       navigate("review-upload");
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      setUploadError("Couldn't read this statement. Make sure it's a valid CSV or XLSX bank statement.");
+      if (error.message === "PDF_ENCRYPTED") {
+         setPdfPasswordRequired(true);
+      } else {
+         setUploadError(error.message || "Couldn't read this statement. Make sure it's a valid CSV, XLSX, or PDF bank statement.");
+         setPendingPdfFile(null);
+      }
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handlePdfPasswordSubmit = () => {
+    if (pendingPdfFile && pdfPassword) {
+       processUpload(pendingPdfFile, pdfPassword);
+    }
   };
 
   const handlePendingEdit = (index: number, field: string, value: any) => {
@@ -461,7 +485,7 @@ export default function Home() {
       </div>
 
       {/* Global File Input */}
-      <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} />
+      <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.xlsx,.xls,.pdf" onChange={handleFileUpload} />
 
       {/* Header */}
       <nav className="mx-auto flex max-w-6xl items-center justify-between">
@@ -516,7 +540,40 @@ export default function Home() {
 
       {view === "upload-loading" && (
         <section className="mx-auto flex max-w-lg flex-col items-center justify-center py-32 text-center">
-           {uploadError ? (
+           {pdfPasswordRequired ? (
+             <div className="bg-[#1a1b19] p-8 border-l-4 border-l-[#d5ff51] text-left shadow-2xl relative w-full">
+               <h3 className="text-xl font-bold text-[#f6f3e8] uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <svg className="w-6 h-6 text-[#d5ff51]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                  This PDF is protected
+               </h3>
+               <p className="text-[#8b8b80] mb-6">Enter the password provided by your bank to unlock the statement. We decrypt this locally in memory and never save your password.</p>
+               <div className="flex flex-col gap-4">
+                 <input 
+                   type="password" 
+                   value={pdfPassword} 
+                   onChange={(e) => setPdfPassword(e.target.value)} 
+                   placeholder="Password"
+                   className="bg-[#10110f] text-[#f6f3e8] border border-[#30312f] p-4 font-mono w-full focus:outline-none focus:border-[#d5ff51] transition-colors"
+                   onKeyDown={(e) => e.key === 'Enter' && handlePdfPasswordSubmit()}
+                 />
+                 <div className="flex gap-4">
+                   <button 
+                     onClick={() => { setPdfPasswordRequired(false); setPendingPdfFile(null); navigate("landing"); }}
+                     className="flex-1 border border-[#30312f] text-[#f6f3e8] py-4 font-bold uppercase tracking-widest hover:bg-[#20211f] transition-all"
+                   >
+                     Cancel
+                   </button>
+                   <button 
+                     onClick={handlePdfPasswordSubmit}
+                     className="flex-1 bg-[#d5ff51] text-[#10110f] py-4 font-bold uppercase tracking-widest hover:bg-[#c2ef30] transition-all"
+                   >
+                     Unlock
+                   </button>
+                 </div>
+               </div>
+               {uploadError && <p className="text-red-500 mt-4 text-sm font-bold">{uploadError}</p>}
+             </div>
+           ) : uploadError ? (
              <>
                <div className="h-16 w-16 rounded-full border-4 border-red-500/20 border-t-red-500 mb-6" />
                <p className="text-xl font-bold text-red-400">{uploadError}</p>

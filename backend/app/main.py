@@ -4,9 +4,11 @@ import logging
 from datetime import date
 from typing import Callable
 
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, File, UploadFile, Request, Depends, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi import status, HTTPException
 
 from app.demo import demo_transactions
 from app.financial import analyze_transactions
@@ -14,7 +16,6 @@ from app.models import QuickAddRequest, Transaction, TransactionSource, Category
 from app.categorization.rules import categorize_merchant
 from app.auth import get_current_user
 from app.supabase_client import get_supabase, get_admin_supabase
-from fastapi import Depends, HTTPException
 
 from app.parsers.statement import parse_statement
 
@@ -107,10 +108,32 @@ def analyze(transactions: list[Transaction]) -> FinancialSummary:
 
 
 @app.post("/api/upload-statement", response_model=ParseStatementResponse)
-async def upload_statement(file: UploadFile = File(...)):
+async def upload_statement(
+    file: UploadFile = File(...),
+    password: str | None = Form(default=None)
+):
     try:
+        # Size limit (e.g., 10MB)
         contents = await file.read()
-        return parse_statement(contents, file.filename)
+        if len(contents) > 10 * 1024 * 1024:
+            return JSONResponse(
+                status_code=413,
+                content={"error": {"code": "FILE_TOO_LARGE", "message": "File exceeds the 10MB limit."}}
+            )
+            
+        from app.parsers.pdf_parser import PdfEncryptedError, PdfExtractionError
+        try:
+            return parse_statement(contents, file.filename, password=password)
+        except PdfEncryptedError as e:
+            return JSONResponse(
+                status_code=422,
+                content={"error": {"code": "PDF_ENCRYPTED", "message": str(e)}}
+            )
+        except PdfExtractionError as e:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "PDF_EXTRACTION_FAILED", "message": str(e)}}
+            )
     except Exception as e:
         logger.error(f"file_upload_error filename={file.filename} error={str(e)}")
         return JSONResponse(

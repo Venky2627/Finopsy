@@ -1,0 +1,1 @@
+"""Finopsy backend application."""

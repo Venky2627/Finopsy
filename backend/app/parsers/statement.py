@@ -148,7 +148,7 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
                 if m_str and m_str.lower() not in ['nan', 'none']:
                     merchant = m_str
                     
-            category = categorize_merchant(merchant)
+            category, cat_conf = categorize_merchant(merchant)
             
             txn = Transaction(
                 date=dt_date,
@@ -158,7 +158,8 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
                 category=category,
                 type=txn_type,
                 source=TransactionSource.STATEMENT,
-                confidence=0.9 if category.value != "Other" else 0.5
+                extraction_confidence=0.9 if is_pdf else 1.0,
+                category_confidence=cat_conf
             )
             transactions.append(txn)
             parsed_rows += 1

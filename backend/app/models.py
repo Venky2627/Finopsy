@@ -11,15 +11,20 @@ def utc_now() -> datetime:
 
 class Category(str, Enum):
     FOOD = "Food"
+    GROCERIES = "Groceries"
     TRANSPORT = "Transport"
-    EDUCATION = "Education"
     SHOPPING = "Shopping"
     ENTERTAINMENT = "Entertainment"
-    SUBSCRIPTIONS = "Subscriptions"
-    RENT_BILLS = "Rent & Bills"
-    GROCERIES = "Groceries"
+    BILLS = "Bills & Utilities"
+    RENT = "Rent"
     HEALTHCARE = "Healthcare"
-    FAMILY = "Family"
+    EDUCATION = "Education"
+    TRAVEL = "Travel"
+    SUBSCRIPTIONS = "Subscriptions"
+    TRANSFERS = "Transfers"
+    CASH = "Cash Withdrawal"
+    INCOME = "Income"
+    FEES = "Fees & Charges"
     OTHER = "Other"
 
 
@@ -46,7 +51,8 @@ class Transaction(BaseModel):
     type: TransactionType = TransactionType.EXPENSE
     payment_method: str | None = None
     source: TransactionSource = TransactionSource.MANUAL
-    confidence: float = Field(default=1, ge=0, le=1)
+    extraction_confidence: float = Field(default=1.0, ge=0, le=1)
+    category_confidence: float = Field(default=1.0, ge=0, le=1)
     created_at: datetime = Field(default_factory=utc_now)
 
 class QuickAddRequest(BaseModel):
@@ -79,3 +85,11 @@ class DemoResponse(BaseModel):
 class UserProfileUpdate(BaseModel):
     username: str | None = None
     display_name: str | None = None
+
+class TransactionBulkUpdate(BaseModel):
+    id: str
+    merchant: str | None = None
+    date: dt.date | None = None
+    amount: float | None = None
+    type: TransactionType | None = None
+    category: Category | None = None

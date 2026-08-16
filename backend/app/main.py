@@ -12,7 +12,7 @@ from fastapi import status, HTTPException
 
 from app.demo import demo_transactions
 from app.financial import analyze_transactions
-from app.models import QuickAddRequest, Transaction, TransactionSource, Category, ParseStatementResponse, FinancialSummary, DemoResponse, UserProfileUpdate
+from app.models import QuickAddRequest, Transaction, TransactionSource, Category, ParseStatementResponse, FinancialSummary, DemoResponse, UserProfileUpdate, TransactionBulkUpdate
 from app.categorization.rules import categorize_merchant
 from app.auth import get_current_user
 from app.supabase_client import get_supabase, get_admin_supabase
@@ -97,7 +97,8 @@ def quick_add(request: QuickAddRequest) -> Transaction:
         category=category,
         type=request.type,
         source=TransactionSource.MANUAL,
-        confidence=1.0 if category == request.category else 0.8,
+        extraction_confidence=1.0,
+        category_confidence=1.0 if category == request.category else 0.8,
     )
     return txn
 
@@ -195,6 +196,23 @@ def create_transactions(transactions: list[Transaction], user: dict = Depends(ge
         return []
     res = supabase.table('transactions').insert(data).execute()
     return res.data
+
+@app.patch("/api/transactions/bulk")
+def bulk_update_transactions(updates: list[TransactionBulkUpdate], user: dict = Depends(get_current_user)):
+    supabase = get_supabase()
+    # Apply updates individually for now to ensure RLS per-row execution via API
+    # Since Supabase postgrest doesn't easily support bulk update with varying values in one request,
+    # we can iterate or use a stored procedure. Iterating is fine for 30-50 txns.
+    results = []
+    for update in updates:
+        update_data = update.model_dump(exclude_unset=True)
+        txn_id = update_data.pop('id')
+        if not update_data:
+            continue
+        res = supabase.table('transactions').update(update_data).eq('id', txn_id).eq('user_id', user['id']).execute()
+        if res.data:
+            results.append(res.data[0])
+    return results
 
 @app.patch("/api/transactions/{id}")
 def update_transaction(id: str, update: dict, user: dict = Depends(get_current_user)):

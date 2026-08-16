@@ -11,7 +11,8 @@ export interface Transaction {
   type: 'income' | 'expense' | 'transfer' | 'refund';
   payment_method?: string | null;
   source: 'manual' | 'statement';
-  confidence: number;
+  extraction_confidence: number;
+  category_confidence: number;
   created_at: string;
 }
 
@@ -127,7 +128,7 @@ export async function getTransactions(token: string): Promise<Transaction[]> {
 }
 
 export async function saveTransactions(token: string, transactions: Transaction[]): Promise<Transaction[]> {
-  const res = await fetch(`${API_URL}/api/transactions/bulk`, {
+  const res = await fetch(`${API_URL}/api/transactions`, {
     method: "POST",
     headers: getAuthHeaders(token),
     body: JSON.stringify(transactions)
@@ -174,5 +175,24 @@ export async function deleteAllTransactions(token: string): Promise<void> {
 export async function checkUsername(username: string): Promise<{available: boolean}> {
   const res = await fetch(`${API_URL}/api/users/check-username?username=${encodeURIComponent(username)}`);
   if (!res.ok) throw new Error("Failed to check username");
+  return res.json();
+}
+
+export interface TransactionBulkUpdate {
+  id: string;
+  merchant?: string;
+  date?: string;
+  amount?: number;
+  type?: 'income' | 'expense' | 'transfer' | 'refund';
+  category?: string;
+}
+
+export async function bulkUpdateTransactions(token: string, updates: TransactionBulkUpdate[]): Promise<Transaction[]> {
+  const res = await fetch(`${API_URL}/api/transactions/bulk`, {
+    method: "PATCH",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(updates)
+  });
+  if (!res.ok) throw new Error("Failed to bulk update transactions");
   return res.json();
 }

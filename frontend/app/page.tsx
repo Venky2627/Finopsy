@@ -11,17 +11,20 @@ import { ShareCard } from "./components/ShareCard";
 
 const CATEGORY_COLORS: Record<string, string> = {
   Food: "bg-[#d5ff51]",
+  Groceries: "bg-[#7acc7a]",
   Transport: "bg-[#ff9365]",
   Shopping: "bg-[#b7a1ff]",
-  College: "bg-[#6cd4ff]",
-  Education: "bg-[#6cd4ff]",
   Entertainment: "bg-[#ffca58]",
-  Subscriptions: "bg-[#ff8f8f]",
-  "Rent & Bills": "bg-[#4da6ff]",
-  Bills: "bg-[#4da6ff]",
-  Groceries: "bg-[#7acc7a]",
+  "Bills & Utilities": "bg-[#4da6ff]",
+  Rent: "bg-[#6cd4ff]",
   Healthcare: "bg-[#ff99cc]",
-  Family: "bg-[#ffb366]",
+  Education: "bg-[#6cd4ff]",
+  Travel: "bg-[#ffb366]",
+  Subscriptions: "bg-[#ff8f8f]",
+  Transfers: "bg-[#b3b3b3]",
+  "Cash Withdrawal": "bg-[#ff6666]",
+  Income: "bg-[#55ff55]",
+  "Fees & Charges": "bg-[#ff4d4d]",
   Other: "bg-[#cccccc]",
 };
 
@@ -110,6 +113,7 @@ export default function Home() {
   const [pdfPasswordRequired, setPdfPasswordRequired] = useState(false);
   const [pdfPassword, setPdfPassword] = useState("");
   const [pendingPdfFile, setPendingPdfFile] = useState<File | null>(null);
+  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
 
   // Form State
   const [amount, setAmount] = useState("");
@@ -626,44 +630,70 @@ export default function Home() {
               {pendingUploadTransactions.length === 0 ? (
                 <p className="p-4 text-center text-[#c9c6ba]">No valid transactions found to import.</p>
               ) : (
-                pendingUploadTransactions.map((txn, i) => (
-                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl bg-[#10110f] p-3 border border-transparent hover:border-[#f6f3e822]">
-                    <input 
-                      type="date" 
-                      value={txn.date} 
-                      onChange={(e) => handlePendingEdit(i, 'date', e.target.value)} 
-                      className="bg-transparent border border-[#f6f3e833] rounded px-2 py-1 text-sm text-[#f6f3e8]" 
-                    />
-                    <input 
-                      type="text" 
-                      value={txn.merchant} 
-                      onChange={(e) => handlePendingEdit(i, 'merchant', e.target.value)} 
-                      className="bg-transparent border border-[#f6f3e833] rounded px-2 py-1 text-sm font-bold flex-1 min-w-[120px]" 
-                    />
-                    <select 
-                      value={txn.category} 
-                      onChange={(e) => handlePendingEdit(i, 'category', e.target.value)} 
-                      className="bg-transparent border border-[#f6f3e833] rounded px-2 py-1 text-sm"
-                    >
-                      {Object.keys(CATEGORY_COLORS).map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                    </select>
-                    <select 
-                      value={txn.type} 
-                      onChange={(e) => handlePendingEdit(i, 'type', e.target.value)} 
-                      className="bg-transparent border border-[#f6f3e833] rounded px-2 py-1 text-sm"
-                    >
-                      <option value="expense">Expense</option>
-                      <option value="income">Income</option>
-                    </select>
-                    <input 
-                      type="number" 
-                      value={txn.amount} 
-                      onChange={(e) => handlePendingEdit(i, 'amount', parseFloat(e.target.value) || 0)} 
-                      className="bg-transparent border border-[#f6f3e833] rounded px-2 py-1 text-sm font-black w-24 text-right" 
-                    />
-                    <button onClick={() => handlePendingDelete(i)} className="ml-2 text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10 text-xl leading-none">×</button>
-                  </div>
-                ))
+                pendingUploadTransactions.map((txn, i) => {
+                  const isEditing = editingRowIndex === i;
+                  const isHighConfidence = (txn.category_confidence ?? 1.0) >= 0.8;
+                  
+                  if (isEditing) {
+                    return (
+                      <div key={i} className="flex flex-col gap-3 rounded-xl bg-[#1a1b19] p-4 border border-[#d5ff51] mb-2">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Merchant</label>
+                             <input type="text" value={txn.merchant} onChange={(e) => handlePendingEdit(i, 'merchant', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm font-bold w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]" />
+                          </div>
+                          <div>
+                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Date</label>
+                             <input type="date" value={txn.date} onChange={(e) => handlePendingEdit(i, 'date', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]" />
+                          </div>
+                          <div>
+                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Amount (₹)</label>
+                             <input type="number" value={txn.amount} onChange={(e) => handlePendingEdit(i, 'amount', parseFloat(e.target.value) || 0)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]" />
+                          </div>
+                          <div>
+                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Type</label>
+                             <select value={txn.type} onChange={(e) => handlePendingEdit(i, 'type', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]">
+                               <option value="expense">Expense</option>
+                               <option value="income">Income</option>
+                             </select>
+                          </div>
+                          <div className="col-span-2">
+                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Category</label>
+                             <select value={txn.category} onChange={(e) => handlePendingEdit(i, 'category', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]">
+                               {Object.keys(CATEGORY_COLORS).map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                             </select>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-2">
+                          <button onClick={() => { handlePendingDelete(i); setEditingRowIndex(null); }} className="px-4 py-2 text-red-400 hover:text-red-300 text-sm font-bold uppercase tracking-wider">Remove</button>
+                          <button onClick={() => setEditingRowIndex(null)} className="px-4 py-2 bg-[#d5ff51] text-[#10110f] hover:bg-[#c2ef30] rounded text-sm font-bold uppercase tracking-wider transition-colors">Save</button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={i} className="flex items-center gap-3 rounded-xl bg-[#10110f] p-3 border border-transparent hover:border-[#f6f3e822] transition-colors mb-1">
+                      <div className="flex-none">
+                        {isHighConfidence ? (
+                          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#d5ff51]/20 text-[#d5ff51] text-sm">✓</span>
+                        ) : (
+                          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-500/20 text-yellow-500 text-sm font-bold" title="Low confidence category match">⚠</span>
+                        )}
+                      </div>
+                      <div className="w-24 flex-none text-sm text-[#8b8b80]">{txn.date}</div>
+                      <div className="flex-1 font-bold text-[#f6f3e8] truncate" title={txn.merchant}>{txn.merchant}</div>
+                      <div className="w-24 flex-none font-black text-right">{txn.type === 'income' ? '+' : ''}₹{txn.amount?.toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}</div>
+                      <div className="w-32 flex-none flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${CATEGORY_COLORS[txn.category] || CATEGORY_COLORS["Other"]}`} />
+                        <span className="text-sm text-[#c9c6ba] truncate">{txn.category}</span>
+                      </div>
+                      <div className="flex-none">
+                        <button onClick={() => setEditingRowIndex(i)} className="text-[#8b8b80] hover:text-[#f6f3e8] text-sm font-bold uppercase tracking-wider px-3 py-1 rounded hover:bg-[#f6f3e811] transition-colors border border-[#f6f3e833]">Edit</button>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

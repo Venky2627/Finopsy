@@ -13,7 +13,8 @@ export interface Transaction {
   source: 'manual' | 'statement';
   extraction_confidence: number;
   category_confidence: number;
-  created_at: string;
+  user_edited?: boolean;
+  created_at?: string;
 }
 
 export interface FinancialSummary {
@@ -23,6 +24,8 @@ export interface FinancialSummary {
   transaction_count: number;
   category_totals: Record<string, number>;
   category_percentages: Record<string, number>;
+  daily_spending: { date: string, amount: number }[];
+  subscriptions?: Subscription[];
 }
 
 export interface DemoResponse {
@@ -61,6 +64,58 @@ export async function quickAdd(payload: {
   return res.json();
 }
 
+export async function resolveMerchants(merchants: string[]): Promise<Record<string, {clean_name: string, category: string}>> {
+  const res = await fetch(`${API_URL}/api/merchants/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ merchants })
+  });
+  if (!res.ok) throw new Error("Failed to resolve merchants");
+  const data = await res.json();
+  return data.mapping;
+}
+
+export interface RoastRequest {
+  total_spent: number;
+  category_totals: Record<string, number>;
+  category_percentages: Record<string, number>;
+  top_merchant: string | null;
+  top_merchant_amount: number | null;
+  transaction_count: number;
+  severity?: 'mild' | 'savage' | 'unhinged';
+  seen_roasts?: string[];
+}
+
+export interface RoastResponse {
+  roast_id: string;
+  severity: string;
+  text: string;
+  source: string;
+}
+
+export async function generateRoast(data: RoastRequest): Promise<RoastResponse> {
+  try {
+    const res = await fetch(`${API_URL}/api/roast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn("Roast API call failed, using client fallback", e);
+  }
+  
+  // Safe client fallback if server is unreachable
+  return {
+    roast_id: `client_${Date.now()}`,
+    severity: data.severity || 'savage',
+    text: `Your bank account experienced avoidable trauma across ${data.transaction_count} transactions.`,
+    source: 'client_fallback'
+  };
+}
+
 export async function analyzeTransactions(transactions: any[]): Promise<FinancialSummary> {
   const res = await fetch(`${API_URL}/api/analyze`, {
     method: "POST",
@@ -71,13 +126,17 @@ export async function analyzeTransactions(transactions: any[]): Promise<Financia
   return res.json();
 }
 
-export async function uploadStatement(file: File, password?: string): Promise<ParseStatementResponse> {
+export async function uploadStatement(file: File, password?: string, token?: string): Promise<ParseStatementResponse> {
   const formData = new FormData();
   formData.append("file", file);
   if (password) formData.append("password", password);
   
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  
   const res = await fetch(`${API_URL}/api/upload-statement`, {
     method: "POST",
+    headers,
     body: formData,
   });
   if (!res.ok) {
@@ -196,3 +255,65 @@ export async function bulkUpdateTransactions(token: string, updates: Transaction
   if (!res.ok) throw new Error("Failed to bulk update transactions");
   return res.json();
 }
+
+export interface Subscription {
+  merchant: string;
+  category: string;
+  monthly_amount: number;
+  frequency: string;
+  occurrence_count: number;
+  total_paid_so_far: number;
+  annual_projection: number;
+  next_predicted_date: string | null;
+  confidence: number;
+}
+
+export interface BudgetCreate {
+  category: string;
+  monthly_limit: number;
+}
+
+export interface BudgetOut {
+  id: string;
+  category: string;
+  monthly_limit: number;
+  spent_this_month: number;
+  remaining: number;
+  percentage: number;
+  status: 'safe' | 'warning' | 'danger' | 'exceeded';
+  created_at: string;
+}
+
+export async function fetchBudgets(token: string): Promise<BudgetOut[]> {
+  const res = await fetch(`${API_URL}/api/budgets`, { headers: getAuthHeaders(token) });
+  if (!res.ok) throw new Error("Failed to fetch budgets");
+  return res.json();
+}
+
+export async function createBudget(token: string, budget: BudgetCreate): Promise<BudgetOut> {
+  const res = await fetch(`${API_URL}/api/budgets`, {
+    method: "POST",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(budget)
+  });
+  if (!res.ok) throw new Error("Failed to create budget");
+  return res.json();
+}
+
+export async function updateBudget(token: string, id: string, monthly_limit: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/budgets/${id}`, {
+    method: "PATCH",
+    headers: getAuthHeaders(token),
+    body: JSON.stringify({ monthly_limit })
+  });
+  if (!res.ok) throw new Error("Failed to update budget");
+}
+
+export async function deleteBudget(token: string, id: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/budgets/${id}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(token)
+  });
+  if (!res.ok) throw new Error("Failed to delete budget");
+}
+

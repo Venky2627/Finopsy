@@ -1,17 +1,24 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+
+import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { checkUsername } from '../api';
 
-export function UsernameOnboarding() {
+interface UsernameOnboardingProps {
+  isOpen?: boolean;
+}
+
+export function UsernameOnboarding({ isOpen = true }: UsernameOnboardingProps) {
   const { updateProfile } = useAuth();
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  if (!isOpen) return null;
+
   const validate = (val: string) => {
     if (val.length < 3 || val.length > 20) return "Must be 3-20 characters";
-    if (!/^[a-zA-Z0-9_]+$/.test(val)) return "Letters, numbers, and underscores only";
+    if (!/^[a-zA-Z0-9_]+$/.test(val)) return "Alphanumeric and underscores only";
     return "";
   };
 
@@ -30,52 +37,61 @@ export function UsernameOnboarding() {
     try {
       const { available } = await checkUsername(username);
       if (!available) {
-        setError('Username is already taken');
+        setError('Username is already registered');
         setLoading(false);
         return;
       }
       await updateProfile({ username });
     } catch (err: any) {
-      setError(err.message || 'Error saving username');
+      setError(err.message || 'Error updating username');
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#10110f] p-4 text-[#f6f3e8] font-sans">
-      <div className="w-full max-w-md">
-        <h1 className="text-4xl font-black mb-2 tracking-widest text-center text-[#d5ff51]">FINOPSY</h1>
-        <h2 className="text-2xl font-bold mb-8 text-center uppercase text-[#5c5c54]">What should we call you?</h2>
-        
-        <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0B0C0B] p-4 text-[#F2F1EC]">
+      <div className="surface-card w-full max-w-md p-8 border border-[rgba(255,255,255,0.12)]">
+        <span className="font-mono-data text-[10px] uppercase tracking-widest text-[#8D908A] block mb-2 text-center">
+          FINOPSY / IDENTITY
+        </span>
+        <h1 className="font-editorial text-2xl font-bold tracking-tight text-center mb-2">
+          Establish Forensic Handle
+        </h1>
+        <p className="text-xs text-[#8D908A] text-center mb-6">
+          Your identifier will be embedded into exported forensic autopsy reports.
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <div className="flex items-center bg-[#10110f] border-b-4 border-[#f6f3e8] focus-within:border-[#d5ff51] pb-2 transition-colors">
-              <span className="text-3xl font-black text-[#5c5c54] mr-2">@</span>
+            <div className="flex items-center bg-[#171917] border border-[rgba(255,255,255,0.1)] focus-within:border-[rgba(255,255,255,0.3)] rounded p-2.5 transition-colors">
+              <span className="font-mono-data text-[#8D908A] mr-2">@</span>
               <input
                 type="text"
                 value={username}
                 onChange={handleChange}
-                placeholder="USERNAME"
-                className="w-full bg-transparent text-3xl font-black focus:outline-none placeholder-[#20211f]"
+                placeholder="username"
+                className="w-full bg-transparent text-base font-sans font-medium focus:outline-none placeholder-[#555753] text-[#F2F1EC]"
                 autoFocus
               />
             </div>
-            {error && <p className="text-red-500 font-bold mt-2 uppercase">{error}</p>}
+            {error && <p className="text-[#E5484D] text-xs font-mono-data mt-2">{error}</p>}
           </div>
 
-          <div className="bg-[#20211f] p-4 border border-[#5c5c54]">
-            <p className="text-xs font-bold text-[#5c5c54] mb-2 uppercase">Share Card Preview</p>
-            <p className="font-black text-xl text-[#d5ff51] break-all">
-              @{username || 'USERNAME'}'S MONEY AUTOPSY
+          <div className="bg-[#171917] p-3.5 rounded border border-[rgba(255,255,255,0.06)] font-mono-data text-xs">
+            <span className="text-[9px] uppercase tracking-wider text-[#8D908A] block mb-1">
+              REPORT PREVIEW
+            </span>
+            <p className="text-[#C8FF2E] font-medium truncate">
+              @{username || 'user'}&apos;S FORENSIC AUTOPSY
             </p>
           </div>
 
           <button
             type="submit"
             disabled={loading || !!error || !username}
-            className="w-full bg-[#d5ff51] text-[#10110f] font-black py-5 text-xl hover:bg-white disabled:opacity-50 disabled:hover:bg-[#d5ff51] transition-colors uppercase tracking-widest mt-4"
+            className="btn-primary w-full text-xs font-semibold py-3 tracking-wider uppercase"
           >
-            {loading ? 'SAVING...' : 'CONTINUE'}
+            {loading ? 'INITIALIZING...' : 'CONTINUE TO DASHBOARD'}
           </button>
         </form>
       </div>

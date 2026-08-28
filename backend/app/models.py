@@ -53,6 +53,7 @@ class Transaction(BaseModel):
     source: TransactionSource = TransactionSource.MANUAL
     extraction_confidence: float = Field(default=1.0, ge=0, le=1)
     category_confidence: float = Field(default=1.0, ge=0, le=1)
+    user_edited: bool = False
     created_at: datetime = Field(default_factory=utc_now)
 
 class QuickAddRequest(BaseModel):
@@ -70,6 +71,31 @@ class ParseStatementResponse(BaseModel):
     skipped_rows: int
     warnings: list[str]
 
+class SubscriptionOut(BaseModel):
+    merchant: str
+    category: str
+    monthly_amount: float
+    frequency: str
+    occurrence_count: int
+    total_paid_so_far: float
+    annual_projection: float
+    next_predicted_date: str | None
+    confidence: float
+
+class BudgetCreate(BaseModel):
+    category: Category
+    monthly_limit: float = Field(gt=0)
+
+class BudgetOut(BaseModel):
+    id: UUID
+    category: Category
+    monthly_limit: float
+    spent_this_month: float
+    remaining: float
+    percentage: float
+    status: str
+    created_at: datetime
+
 class FinancialSummary(BaseModel):
     total_income: float
     total_spending: float
@@ -77,6 +103,8 @@ class FinancialSummary(BaseModel):
     transaction_count: int
     category_totals: dict[str, float]
     category_percentages: dict[str, float]
+    daily_spending: list[dict[str, float | str]] = Field(default_factory=list)
+    subscriptions: list[SubscriptionOut] = Field(default_factory=list)
 
 class DemoResponse(BaseModel):
     transactions: list[Transaction]

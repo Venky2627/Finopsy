@@ -1,32 +1,100 @@
-import pandas as pd
+import re
 import io
 import datetime as dt
-from typing import List
+import pandas as pd
+from typing import List, Optional
 
-from app.models import Transaction, TransactionSource, TransactionType, ParseStatementResponse
+from app.models import Transaction, TransactionSource, TransactionType, ParseStatementResponse, Category
 from app.categorization.rules import categorize_merchant
+from app.categorization.identity import identify_merchant
 
-def parse_statement(file_bytes: bytes, filename: str, password: str | None = None) -> ParseStatementResponse:
+def clean_currency_amount(val) -> Optional[float]:
+    """
+    Robust Indian & International currency parser:
+    1,20,000 -> 120000.0
+    ₹1,20,000.50 -> 120000.50
+    Rs. 1,200 -> 1200.0
+    INR 1200 -> 1200.0
+    -500 -> -500.0
+    (500.00) -> -500.0
+    """
+    if pd.isna(val):
+        return None
+    val_str = str(val).strip()
+    if not val_str or val_str.lower() in ['nan', 'none', 'null', '', '-']:
+        return None
+        
+    # Check negative parentheses: (500.00)
+    is_neg = False
+    cleaned = val_str
+    if cleaned.startswith('(') and cleaned.endswith(')'):
+        is_neg = True
+        cleaned = cleaned[1:-1].strip()
+        
+    # Strip currency signs & text notation (case-insensitive)
+    cleaned = re.sub(r'(?i)(?:rs\.?|inr|usd|eur|gbp|[\u20B9$€£])', '', cleaned).strip()
+    # Strip all commas and spaces
+    cleaned = cleaned.replace(',', '').replace(' ', '')
+    
+    if cleaned.startswith('-'):
+        is_neg = True
+        cleaned = cleaned[1:].strip()
+    elif cleaned.startswith('+'):
+        cleaned = cleaned[1:].strip()
+        
+    try:
+        num = float(cleaned)
+        return -abs(num) if is_neg else num
+    except (ValueError, TypeError):
+        return None
+
+def parse_statement(
+    file_bytes: bytes, 
+    filename: str, 
+    password: str | None = None, 
+    user_rules: dict[str, Category] = None,
+    global_aliases: dict[str, str] = None,
+    clean_merchants: list[str] = None
+) -> ParseStatementResponse:
     transactions: List[Transaction] = []
     warnings: List[str] = []
     
-    is_csv = filename.lower().endswith('.csv')
-    is_excel = filename.lower().endswith(('.xlsx', '.xls'))
-    is_pdf = filename.lower().endswith('.pdf')
+    if user_rules is None:
+        user_rules = {}
+    if global_aliases is None:
+        global_aliases = {}
+    if clean_merchants is None:
+        clean_merchants = []
+        
+    if not file_bytes:
+        warnings.append("File is empty.")
+        return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
+    
+    fn_lower = filename.lower()
+    is_csv = fn_lower.endswith('.csv')
+    is_excel = fn_lower.endswith(('.xlsx', '.xls'))
+    is_pdf = fn_lower.endswith('.pdf')
     
     if not (is_csv or is_excel or is_pdf):
-        warnings.append("Unsupported file type. Expected .csv, .xlsx, or .pdf")
+        warnings.append("Unsupported file format. Please upload a PDF, CSV, or Excel (.xlsx) statement.")
+        return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
+    
+    # Magic bytes check
+    if is_pdf and not file_bytes.startswith(b'%PDF-'):
+        warnings.append("The file does not appear to be a valid PDF.")
+        return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
+    if is_excel and fn_lower.endswith('.xlsx') and not file_bytes.startswith(b'PK\x03\x04'):
+        warnings.append("The file does not appear to be a valid Excel (.xlsx) file.")
         return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
     
     try:
         if is_pdf:
             from app.parsers.pdf_parser import extract_pdf_tables
             df_raw = extract_pdf_tables(file_bytes, password)
-        # Force a large number of columns to handle jagged junk rows at the top of statements
         elif is_csv:
-            df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str, names=range(30), engine='python')
+            df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str, names=range(35), engine='python')
         else:
-            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str, names=range(30))
+            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str, names=range(35))
     except pd.errors.EmptyDataError:
         warnings.append("File is empty.")
         return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
@@ -37,13 +105,13 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
             warnings.append(f"Failed to read file: {str(e)}")
         return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
         
-    if df_raw.empty:
-        warnings.append("File is empty.")
+    if df_raw is None or df_raw.empty:
+        warnings.append("File contains no readable table rows.")
         return ParseStatementResponse(transactions=[], total_rows=0, parsed_rows=0, skipped_rows=0, warnings=warnings)
         
     # Find probable header row
     header_row_idx = 0
-    date_aliases = ['date', 'txn date', 'value date', 'transaction date']
+    date_aliases = ['date', 'txn date', 'value date', 'transaction date', 'posting date']
     found_header = False
     for idx, row in df_raw.iterrows():
         row_str = ' '.join([str(val).lower() for val in row.values if pd.notna(val)])
@@ -63,13 +131,13 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
     col_map = {}
     for col in df.columns:
         if col == 'nan': continue
-        if any(alias in col for alias in ['date', 'txn date']):
+        if any(alias in col for alias in ['date', 'txn date', 'value date', 'posting date']):
             if 'norm_date' not in col_map.values(): col_map[col] = 'norm_date'
-        elif any(alias in col for alias in ['narration', 'description', 'particulars', 'remarks', 'merchant']):
+        elif any(alias in col for alias in ['narration', 'description', 'particulars', 'remarks', 'merchant', 'details']):
             if 'norm_merchant' not in col_map.values(): col_map[col] = 'norm_merchant'
-        elif any(alias in col for alias in ['withdrawal', 'dr', 'debit']):
+        elif any(alias in col for alias in ['withdrawal', 'dr', 'debit', 'debit amount']):
             if 'norm_debit' not in col_map.values(): col_map[col] = 'norm_debit'
-        elif any(alias in col for alias in ['deposit', 'cr', 'credit']):
+        elif any(alias in col for alias in ['deposit', 'cr', 'credit', 'credit amount']):
             if 'norm_credit' not in col_map.values(): col_map[col] = 'norm_credit'
         elif any(alias in col for alias in ['amount', 'txn amount', 'transaction amount']):
             if 'norm_amount' not in col_map.values(): col_map[col] = 'norm_amount'
@@ -96,7 +164,7 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
         
     for index, row in df.iterrows():
         try:
-            raw_date = row['norm_date']
+            raw_date = row.get('norm_date')
             if pd.isna(raw_date):
                 skipped_rows += 1
                 continue
@@ -108,7 +176,6 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
                 
             parsed_date = pd.to_datetime(raw_date_str, dayfirst=True, errors='coerce')
             if pd.isna(parsed_date):
-                warnings.append(f"Row {index}: Invalid date format '{raw_date_str}'")
                 skipped_rows += 1
                 continue
                 
@@ -118,24 +185,23 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
             txn_type = TransactionType.EXPENSE
             
             if has_amount and pd.notna(row.get('norm_amount')):
-                val_str = str(row.get('norm_amount')).replace(',', '').strip()
-                if val_str and val_str not in ['nan', 'none', 'null']:
-                    val = float(val_str)
-                    if val < 0:
-                        amount = abs(val)
+                num = clean_currency_amount(row.get('norm_amount'))
+                if num is not None and num != 0:
+                    if num < 0:
+                        amount = abs(num)
                         txn_type = TransactionType.INCOME
                     else:
-                        amount = val
+                        amount = num
                         txn_type = TransactionType.EXPENSE
             elif has_debit and pd.notna(row.get('norm_debit')):
-                val_str = str(row.get('norm_debit')).replace(',', '').strip()
-                if val_str and val_str not in ['nan', 'none', 'null', '0', '0.0']:
-                    amount = float(val_str)
+                num = clean_currency_amount(row.get('norm_debit'))
+                if num is not None and num > 0:
+                    amount = num
                     txn_type = TransactionType.EXPENSE
             elif has_credit and pd.notna(row.get('norm_credit')):
-                val_str = str(row.get('norm_credit')).replace(',', '').strip()
-                if val_str and val_str not in ['nan', 'none', 'null', '0', '0.0']:
-                    amount = float(val_str)
+                num = clean_currency_amount(row.get('norm_credit'))
+                if num is not None and num > 0:
+                    amount = num
                     txn_type = TransactionType.INCOME
                     
             if amount <= 0:
@@ -148,13 +214,28 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
                 if m_str and m_str.lower() not in ['nan', 'none']:
                     merchant = m_str
                     
-            category, cat_conf = categorize_merchant(merchant)
+            # Merchant Identity Normalization
+            norm, clean_name, match_method, conf, override_cat = identify_merchant(
+                merchant, user_rules, global_aliases, clean_merchants
+            )
+            
+            effective_merchant = clean_name if clean_name else norm
+            if not effective_merchant:
+                effective_merchant = merchant
+            
+            if override_cat:
+                category = override_cat
+                cat_conf = 1.0
+            else:
+                category, cat_conf = categorize_merchant(effective_merchant)
+                
+            final_merchant = clean_name if (clean_name and conf >= 0.95) else merchant
             
             txn = Transaction(
                 date=dt_date,
-                amount=amount,
-                merchant=merchant,
-                description=None,
+                amount=round(amount, 2),
+                merchant=final_merchant,
+                description=merchant if final_merchant != merchant else None,
                 category=category,
                 type=txn_type,
                 source=TransactionSource.STATEMENT,
@@ -165,7 +246,6 @@ def parse_statement(file_bytes: bytes, filename: str, password: str | None = Non
             parsed_rows += 1
             
         except Exception as e:
-            warnings.append(f"Row {index}: Skipped due to error: {str(e)}")
             skipped_rows += 1
 
     return ParseStatementResponse(

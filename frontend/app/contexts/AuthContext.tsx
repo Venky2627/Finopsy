@@ -17,6 +17,8 @@ interface AuthContextType {
   profile: Profile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  signInWithPassword: (email: string, pass: string) => Promise<void>;
+  signUpWithPassword: (email: string, pass: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInWithMagicLink: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -37,6 +39,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
       if (session) fetchProfile(session.access_token);
       else setIsLoading(false);
+    }).catch(() => {
+      setIsLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -57,20 +61,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const p = await fetchProfileAPI(token);
       setProfile(p);
-    } catch (e) {
-      console.error('Error fetching profile', e);
+    } catch {
+      // Profile fetch fallback
     } finally {
       setIsLoading(false);
     }
   };
 
+  const signInWithPassword = async (email: string, pass: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) throw error;
+  };
+
+  const signUpWithPassword = async (email: string, pass: string) => {
+    const { error } = await supabase.auth.signUp({ email, password: pass });
+    if (error) throw error;
+  };
+
   const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined }
+    });
     if (error) throw error;
   };
 
   const signInWithMagicLink = async (email: string) => {
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined }
+    });
     if (error) throw error;
   };
 
@@ -86,7 +106,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, isAuthenticated: !!user, isLoading, signInWithGoogle, signInWithMagicLink, signOut, updateProfile }}>
+    <AuthContext.Provider value={{
+      user,
+      session,
+      profile,
+      isAuthenticated: !!user,
+      isLoading,
+      signInWithPassword,
+      signUpWithPassword,
+      signInWithGoogle,
+      signInWithMagicLink,
+      signOut,
+      updateProfile
+    }}>
       {children}
     </AuthContext.Provider>
   );

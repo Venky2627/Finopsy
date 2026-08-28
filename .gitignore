@@ -5,18 +5,26 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Environment Variables
+# Environment Variables & Secrets
 .env
 .env.local
 .env.*.local
 !.env.example
 
-# Next.js
+# Next.js & Build Outputs
 .next/
 out/
 build/
+dist/
 
-# Editor
+# Local Backups & Scratch
+frontend/app_backup_debloat_checkpoint/
+scratch/
+*.ipynb
+*.tmp
+
+# Editor & System
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db

@@ -1,119 +1,86 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { fetchDemo, quickAdd, analyzeTransactions, uploadStatement, getTransactions, saveTransactions, migrateTransactions, deleteTransaction } from "./api";
+import {
+  fetchDemo,
+  quickAdd,
+  analyzeTransactions,
+  uploadStatement,
+  getTransactions,
+  saveTransactions,
+  migrateTransactions,
+  deleteTransaction,
+  resolveMerchants,
+  generateRoast,
+  Transaction,
+  FinancialSummary,
+} from "./api";
 import { useAuth } from "./contexts/AuthContext";
 import { AuthModal } from "./components/AuthModal";
 import { UsernameOnboarding } from "./components/UsernameOnboarding";
 import { SettingsModal } from "./components/SettingsModal";
-import { toPng } from "html-to-image";
 import { ShareCard } from "./components/ShareCard";
+import { ShareModal } from "./components/ShareModal";
+import { OverviewTab } from "./components/dashboard/OverviewTab";
+import { TransactionsTab } from "./components/dashboard/TransactionsTab";
+import { InsightsTab } from "./components/dashboard/InsightsTab";
+import { AutopsyModal } from "./components/dashboard/AutopsyModal";
+import { ThermalReceiptVisual } from "./components/landing/ThermalReceiptVisual";
+import { LaserScannerVisual } from "./components/landing/LaserScannerVisual";
+import { InteractiveRoastVisual } from "./components/landing/InteractiveRoastVisual";
+import { SubscriptionStackVisual } from "./components/landing/SubscriptionStackVisual";
+import { AutopsyLoadingScreen } from "./components/loading/AutopsyLoadingScreen";
+import FinopsyIntro from "./components/FinopsyIntro";
+import Lenis from "lenis";
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Food: "bg-[#d5ff51]",
-  Groceries: "bg-[#7acc7a]",
-  Transport: "bg-[#ff9365]",
-  Shopping: "bg-[#b7a1ff]",
-  Entertainment: "bg-[#ffca58]",
-  "Bills & Utilities": "bg-[#4da6ff]",
-  Rent: "bg-[#6cd4ff]",
-  Healthcare: "bg-[#ff99cc]",
-  Education: "bg-[#6cd4ff]",
-  Travel: "bg-[#ffb366]",
-  Subscriptions: "bg-[#ff8f8f]",
-  Transfers: "bg-[#b3b3b3]",
-  "Cash Withdrawal": "bg-[#ff6666]",
-  Income: "bg-[#55ff55]",
-  "Fees & Charges": "bg-[#ff4d4d]",
-  Other: "bg-[#cccccc]",
-};
+type ViewState =
+  | "landing"
+  | "quick-add"
+  | "confirmation"
+  | "upload-beta"
+  | "upload-loading"
+  | "review-upload"
+  | "dashboard";
 
-const ROASTS: Record<string, string> = {
-  Food: "Another food delivery? Your kitchen is just a microwave stand.",
-  Transport: "Riding in style while your bank balance is walking.",
-  Education: "Buying books you'll open exactly once: night before exams.",
-  Shopping: "Retail therapy for problems money can't fix.",
-  Entertainment: "Paying to distract yourself from your financial reality.",
-  Subscriptions: "Paying monthly for gym/streaming you use once a year.",
-  "Rent & Bills": "Adulting: paying to exist in a concrete box.",
-  Bills: "Adulting: paying to exist in a concrete box.",
-  Groceries: "Buying organic kale that will rot in the fridge.",
-  Healthcare: "Being sick is too expensive. Just drink water.",
-  Family: "Sending money home so they know you're still alive.",
-  Other: "We don't even know what this is, but your wallet felt it.",
-};
+type DashboardTab = "overview" | "transactions" | "insights";
 
-type ViewState = "landing" | "quick-add" | "confirmation" | "upload-loading" | "review-upload" | "dashboard" | "settings";
+const CATEGORIES_LIST = [
+  "Food",
+  "Transport",
+  "Shopping",
+  "Entertainment",
+  "Bills",
+  "Groceries",
+  "Healthcare",
+  "Education",
+  "Travel",
+  "Subscriptions",
+  "Income",
+  "Other",
+];
 
 export default function Home() {
   const [view, setView] = useState<ViewState>("landing");
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any | null>(null);
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("overview");
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [isDemoData, setIsDemoData] = useState<boolean>(false);
   const [lastAddedTransaction, setLastAddedTransaction] = useState<any | null>(null);
 
-  const { user, profile, isAuthenticated, signOut, session, isLoading: authLoading } = useAuth();
+  const { profile, isAuthenticated, session, isLoading: authLoading } = useAuth();
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isUsernameOnboardingOpen, setIsUsernameOnboardingOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAutopsyModalOpen, setIsAutopsyModalOpen] = useState(false);
 
-  useEffect(() => {
-    if (isAuthenticated && profile && !profile.username && !authLoading) {
-      setIsUsernameOnboardingOpen(true);
-    } else {
-      setIsUsernameOnboardingOpen(false);
-    }
-  }, [isAuthenticated, profile, authLoading]);
-
-  useEffect(() => {
-    const fetchAuthTxns = async () => {
-      if (isAuthenticated && session) {
-        try {
-          const txns = await getTransactions(session.access_token);
-          setTransactions(txns);
-          await reAnalyze(txns);
-          setIsDemoData(false);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    };
-    if (isAuthenticated && view === "dashboard") {
-      fetchAuthTxns();
-    }
-  }, [isAuthenticated, session, view]);
-
-  useEffect(() => {
-    const doMigrate = async () => {
-      if (isAuthenticated && session && transactions.length > 0 && !isDemoData) {
-        const hasLocalOnly = transactions.some(t => !t.user_id);
-        if (hasLocalOnly) {
-          try {
-            await migrateTransactions(session.access_token, transactions.filter(t => !t.user_id));
-            const fresh = await getTransactions(session.access_token);
-            setTransactions(fresh);
-            await reAnalyze(fresh);
-          } catch(e) {
-            console.error("Migration failed", e);
-          }
-        }
-      }
-    };
-    if (isAuthenticated) {
-      doMigrate();
-      setIsAuthModalOpen(false);
-    }
-  }, [isAuthenticated, session]);
-
-  // Upload State
+  // Upload & Partial Parse State
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingUploadTransactions, setPendingUploadTransactions] = useState<any[]>([]);
-  const [uploadMetadata, setUploadMetadata] = useState<any | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [pdfPasswordRequired, setPdfPasswordRequired] = useState(false);
-  const [pdfPassword, setPdfPassword] = useState("");
   const [pendingPdfFile, setPendingPdfFile] = useState<File | null>(null);
-  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
+  const [uploadStats, setUploadStats] = useState<{ total: number; parsed: number; skipped: number } | null>(null);
 
   // Form State
   const [amount, setAmount] = useState("");
@@ -125,10 +92,94 @@ export default function Home() {
   const shareCardRef = useRef<HTMLDivElement>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [shareImageUrl, setShareImageUrl] = useState<string | null>(null);
-  const [isGeneratingShare, setIsGeneratingShare] = useState(false);
-  const [shareError, setShareError] = useState<string | null>(null);
 
-  // -- BROWSER HISTORY & SESSION --
+  // AI Roast State
+  const [aiRoast, setAiRoast] = useState<string | null>(null);
+  const [isRoasting, setIsRoasting] = useState(false);
+  const [displayedRoast, setDisplayedRoast] = useState("");
+  const [roastLevel, setRoastLevel] = useState<number>(1);
+  const [seenRoasts, setSeenRoasts] = useState<string[]>([]);
+
+  // Inertial Smooth Scroll on Landing Page (Lenis)
+  useEffect(() => {
+    if (view === "landing") {
+      const lenis = new Lenis({
+        duration: 1.15,
+        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+        orientation: "vertical",
+        gestureOrientation: "vertical",
+        smoothWheel: true,
+      });
+
+      let rafId: number;
+      function raf(time: number) {
+        lenis.raf(time);
+        rafId = requestAnimationFrame(raf);
+      }
+      rafId = requestAnimationFrame(raf);
+
+      return () => {
+        cancelAnimationFrame(rafId);
+        lenis.destroy();
+      };
+    }
+  }, [view]);
+
+  // Username onboarding prompt
+  useEffect(() => {
+    if (isAuthenticated && profile && !profile.username && !authLoading) {
+      setIsUsernameOnboardingOpen(true);
+    } else {
+      setIsUsernameOnboardingOpen(false);
+    }
+  }, [isAuthenticated, profile, authLoading]);
+
+  // Fetch server-authoritative transactions on authenticated login/refresh
+  useEffect(() => {
+    const fetchAuthTxns = async () => {
+      if (isAuthenticated && session?.access_token) {
+        try {
+          const txns = await getTransactions(session.access_token);
+          if (txns && txns.length > 0) {
+            setTransactions(txns);
+            await reAnalyze(txns);
+            setIsDemoData(false);
+          }
+        } catch (e) {
+          // Graceful fallback
+        }
+      }
+    };
+    if (isAuthenticated) {
+      fetchAuthTxns();
+    }
+  }, [isAuthenticated, session]);
+
+  // Idempotent Migration: Anonymous real data -> Authenticated server state
+  useEffect(() => {
+    const doMigrate = async () => {
+      if (isAuthenticated && session?.access_token && transactions.length > 0 && !isDemoData) {
+        const hasLocalOnly = transactions.some((t) => !t.user_id);
+        if (hasLocalOnly) {
+          try {
+            const unpersisted = transactions.filter((t) => !t.user_id);
+            await migrateTransactions(session.access_token, unpersisted);
+            const fresh = await getTransactions(session.access_token);
+            setTransactions(fresh);
+            await reAnalyze(fresh);
+          } catch (e) {
+            // Keep local data on migration error
+          }
+        }
+      }
+    };
+    if (isAuthenticated) {
+      doMigrate();
+      setIsAuthModalOpen(false);
+    }
+  }, [isAuthenticated, session]);
+
+  // Browser History & Storage Restoration
   useEffect(() => {
     const storedTxns = sessionStorage.getItem("finopsy_transactions");
     const storedSummary = sessionStorage.getItem("finopsy_summary");
@@ -136,6 +187,18 @@ export default function Home() {
     if (storedTxns) setTransactions(JSON.parse(storedTxns));
     if (storedSummary) setSummary(JSON.parse(storedSummary));
     if (storedDemo) setIsDemoData(JSON.parse(storedDemo));
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("mode") === "demo" && !storedTxns) {
+      fetchDemo()
+        .then((data) => {
+          setTransactions(data.transactions);
+          setSummary(data.summary);
+          setIsDemoData(true);
+          setView("dashboard");
+        })
+        .catch(console.error);
+    }
 
     if (!window.history.state?.finopsyView) {
       window.history.replaceState({ finopsyView: "landing" }, "", "#landing");
@@ -147,6 +210,7 @@ export default function Home() {
       if (e.state && e.state.finopsyView) {
         setView(e.state.finopsyView);
         setIsShareModalOpen(false);
+        setIsAutopsyModalOpen(false);
       }
     };
     window.addEventListener("popstate", handlePopState);
@@ -162,6 +226,7 @@ export default function Home() {
   const navigate = (newView: ViewState) => {
     window.history.pushState({ finopsyView: newView }, "", `#${newView}`);
     setView(newView);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleReset = () => {
@@ -169,12 +234,12 @@ export default function Home() {
     setSummary(null);
     setLastAddedTransaction(null);
     setPendingUploadTransactions([]);
-    setUploadMetadata(null);
     setIsDemoData(false);
     sessionStorage.clear();
     if (shareImageUrl) URL.revokeObjectURL(shareImageUrl);
     setShareImageUrl(null);
     setIsShareModalOpen(false);
+    setIsAutopsyModalOpen(false);
     navigate("landing");
   };
 
@@ -187,7 +252,7 @@ export default function Home() {
     setSummary(newSummary);
   };
 
-  // -- DEMO AUTOPSY --
+  // Demo Ingestion
   const handleDemo = async () => {
     setLoading(true);
     try {
@@ -202,54 +267,61 @@ export default function Home() {
     setLoading(false);
   };
 
-  // -- UPLOAD PIPELINE --
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList | null } }) => {
+  // Upload Pipeline
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList | null } }
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     setUploadError(null);
     setPdfPasswordRequired(false);
-    setPdfPassword("");
     setPendingPdfFile(file);
     navigate("upload-loading");
-    
+
     await processUpload(file);
   };
 
   const processUpload = async (file: File, password?: string) => {
     try {
-      const result = await uploadStatement(file, password);
+      const token = isAuthenticated && session ? session.access_token : undefined;
+      const result = await uploadStatement(file, password, token);
       setPendingUploadTransactions(result.transactions);
-      setUploadMetadata({
-        total_rows: result.total_rows,
-        parsed_rows: result.parsed_rows,
-        skipped_rows: result.skipped_rows,
-        warnings: result.warnings,
+      setUploadStats({
+        total: result.total_rows,
+        parsed: result.parsed_rows,
+        skipped: result.skipped_rows,
       });
       setPendingPdfFile(null);
       setPdfPasswordRequired(false);
       navigate("review-upload");
     } catch (error: any) {
-      console.error(error);
       if (error.message === "PDF_ENCRYPTED") {
-         setPdfPasswordRequired(true);
+        setPdfPasswordRequired(true);
       } else {
-         setUploadError(error.message || "Couldn't read this statement. Make sure it's a valid CSV, XLSX, or PDF bank statement.");
-         setPendingPdfFile(null);
+        setUploadError(
+          error.message ||
+            "Unable to parse this statement. Please check that it is a valid PDF, CSV, or XLSX file."
+        );
+        setPendingPdfFile(null);
       }
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handlePdfPasswordSubmit = () => {
-    if (pendingPdfFile && pdfPassword) {
-       processUpload(pendingPdfFile, pdfPassword);
+  const handlePdfPasswordSubmit = (pw: string) => {
+    if (pendingPdfFile && pw) {
+      processUpload(pendingPdfFile, pw);
     }
   };
 
   const handlePendingEdit = (index: number, field: string, value: any) => {
     const updated = [...pendingUploadTransactions];
-    updated[index] = { ...updated[index], [field]: value };
+    const txn = { ...updated[index], [field]: value };
+    if (field === "category") {
+      txn.user_edited = true;
+    }
+    updated[index] = txn;
     setPendingUploadTransactions(updated);
   };
 
@@ -259,35 +331,108 @@ export default function Home() {
     setPendingUploadTransactions(updated);
   };
 
+  const handleResolveUnknowns = async () => {
+    try {
+      setIsResolving(true);
+      const unknowns = pendingUploadTransactions.filter(
+        (t) => t.category === "Other" || (t.category_confidence ?? 1.0) < 0.8
+      );
+      const uniqueRawMerchants = Array.from(new Set(unknowns.map((t) => t.merchant)));
+
+      if (uniqueRawMerchants.length === 0) return;
+
+      const mapping = await resolveMerchants(uniqueRawMerchants);
+      const updated = [...pendingUploadTransactions];
+      let hasUpdates = false;
+
+      for (let i = 0; i < updated.length; i++) {
+        const raw = updated[i].merchant;
+        if (mapping[raw]) {
+          updated[i] = {
+            ...updated[i],
+            merchant: mapping[raw].clean_name,
+            category: mapping[raw].category,
+            category_confidence: 1.0,
+            user_edited: true,
+          };
+          hasUpdates = true;
+        }
+      }
+
+      if (hasUpdates) setPendingUploadTransactions(updated);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
   const handleConfirmUpload = async () => {
     let updatedTxns = pendingUploadTransactions;
     if (!isDemoData && transactions.length > 0) {
       updatedTxns = [...transactions, ...pendingUploadTransactions];
     }
-    
+
     if (isAuthenticated && session) {
       try {
         const saved = await saveTransactions(session.access_token, pendingUploadTransactions);
         updatedTxns = !isDemoData && transactions.length > 0 ? [...transactions, ...saved] : saved;
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     setIsDemoData(false);
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
-    
+
     setPendingUploadTransactions([]);
-    setUploadMetadata(null);
+    setUploadStats(null);
     navigate("dashboard");
   };
 
   const handleCancelUpload = () => {
     setPendingUploadTransactions([]);
-    setUploadMetadata(null);
+    setUploadStats(null);
     navigate(transactions.length > 0 ? "dashboard" : "landing");
   };
 
-  // -- QUICK ADD PIPELINE --
+  // Daily Check-In inline Quick Add from OverviewTab
+  const handleOverviewQuickAdd = async (data: {
+    amount: number;
+    merchant: string;
+    category: string;
+    date: string;
+  }) => {
+    let newTxn: Transaction = {
+      id: `local-${Date.now()}`,
+      amount: data.amount,
+      merchant: data.merchant,
+      category: data.category as any,
+      date: data.date,
+      type: "expense" as any,
+      source: "manual" as any,
+      extraction_confidence: 1.0,
+      category_confidence: 1.0,
+      created_at: new Date().toISOString(),
+    };
+
+    if (isAuthenticated && session) {
+      try {
+        const saved = await saveTransactions(session.access_token, [newTxn]);
+        if (saved && saved.length > 0) newTxn = saved[0];
+      } catch (e) {
+        console.error("Failed to persist manual check-in", e);
+      }
+    }
+
+    const updated = [newTxn, ...(!isDemoData ? transactions : [])];
+    setIsDemoData(false);
+    setTransactions(updated);
+    await reAnalyze(updated);
+  };
+
+  // Quick Add View Flow
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -308,15 +453,18 @@ export default function Home() {
   const handleConfirmQuickAdd = async () => {
     let finalTxn = lastAddedTransaction;
     if (isAuthenticated && session) {
-       try {
-         const savedList = await saveTransactions(session.access_token, [lastAddedTransaction]);
-         finalTxn = savedList[0];
-       } catch (e) {}
+      try {
+        const savedList = await saveTransactions(session.access_token, [lastAddedTransaction]);
+        finalTxn = savedList[0];
+      } catch (e) {}
     }
-    const updatedTxns = [...transactions, finalTxn];
+    const updatedTxns = [...(!isDemoData ? transactions : []), finalTxn];
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
-    setAmount(""); setMerchant(""); setCategory("Other"); setLastAddedTransaction(null);
+    setAmount("");
+    setMerchant("");
+    setCategory("Other");
+    setLastAddedTransaction(null);
     setIsDemoData(false);
     navigate("dashboard");
   };
@@ -324,41 +472,43 @@ export default function Home() {
   const handleAddAnother = async () => {
     let finalTxn = lastAddedTransaction;
     if (isAuthenticated && session) {
-       try {
-         const savedList = await saveTransactions(session.access_token, [lastAddedTransaction]);
-         finalTxn = savedList[0];
-       } catch (e) {}
+      try {
+        const savedList = await saveTransactions(session.access_token, [lastAddedTransaction]);
+        finalTxn = savedList[0];
+      } catch (e) {}
     }
-    const updatedTxns = [...transactions, finalTxn];
+    const updatedTxns = [...(!isDemoData ? transactions : []), finalTxn];
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
-    setAmount(""); setMerchant(""); setCategory("Other"); setLastAddedTransaction(null);
+    setAmount("");
+    setMerchant("");
+    setCategory("Other");
+    setLastAddedTransaction(null);
     setIsDemoData(false);
     navigate("quick-add");
   };
 
-  const handleUndoQuickAdd = () => {
-    setLastAddedTransaction(null);
-    navigate(transactions.length > 0 ? "dashboard" : "landing");
-  };
-
   const handleDeleteTransaction = async (id: string) => {
     if (isAuthenticated && session && id) {
-      try { await deleteTransaction(session.access_token, id); } catch(e) { console.error(e); }
+      try {
+        await deleteTransaction(session.access_token, id);
+      } catch (e) {
+        console.error(e);
+      }
     }
-    const updatedTxns = transactions.filter(t => t.id !== id);
+    const updatedTxns = transactions.filter((t) => t.id !== id);
     setTransactions(updatedTxns);
     await reAnalyze(updatedTxns);
   };
 
-  // -- DETERMINISTIC ENGINE --
+  // Money Personality & Roast
   const getMoneyPersonality = (currentSummary: any) => {
-    if (!currentSummary || currentSummary.transaction_count === 0) return "Clean Slate 🏳️";
+    if (!currentSummary || currentSummary.transaction_count === 0) return "Clean Slate";
     const { category_percentages } = currentSummary;
-    if (category_percentages["Food"] > 40) return "SWIGGY SPONSOR";
-    if (category_percentages["Entertainment"] > 30) return "DISTRACTION DEVOTEE";
-    if (category_percentages["Shopping"] > 30) return "RETAIL THERAPIST";
-    
+    if (category_percentages["Food"] > 40) return "Swiggy Sponsor";
+    if (category_percentages["Entertainment"] > 30) return "Distraction Devotee";
+    if (category_percentages["Shopping"] > 30) return "Retail Receptacle";
+
     let maxCat = "";
     let maxVal = -1;
     for (const [cat, val] of Object.entries(category_percentages)) {
@@ -367,520 +517,725 @@ export default function Home() {
         maxCat = cat;
       }
     }
-    if (maxCat === "Transport") return "UBER'S BEST FRIEND";
-    
-    return "BALANCED BROKE";
+    if (maxCat === "Transport") return "Locomotive Drain";
+    return "Balanced Broke";
   };
 
   const getRoast = (currentSummary: any) => {
-    if (!currentSummary || currentSummary.transaction_count === 0) return "Nothing to roast. Yet.";
+    if (!currentSummary || currentSummary.transaction_count === 0)
+      return "Upload a statement to generate your diagnosis.";
+    if (aiRoast) return aiRoast;
+
     const { category_percentages } = currentSummary;
-    
-    if (category_percentages["Food"] > 40) return "Your kitchen is basically decorative.";
-    if (category_percentages["Entertainment"] > 30) return "You didn't spend money. You funded distractions.";
-    if (category_percentages["Shopping"] > 30) return "Amazon knows you better than your family.";
-    
-    let maxCat = "";
-    let maxVal = -1;
-    for (const [cat, val] of Object.entries(category_percentages)) {
-      if ((val as number) > maxVal) {
-        maxVal = val as number;
-        maxCat = cat;
-      }
-    }
-    
-    if (maxCat === "Transport") return "At this point, Uber should put you on payroll.";
-    return "Nothing catastrophic. Just financially concerning.";
+    if (category_percentages["Food"] > 40)
+      return "Your kitchen is basically a glorified microwave stand. 42 orders this month is a hostage situation.";
+    if (category_percentages["Entertainment"] > 30)
+      return "You did not spend money. You funded distractions.";
+    if (category_percentages["Shopping"] > 30)
+      return "Amazon delivery drivers know your dogs by name. Retail therapy won't fix your GPA.";
+
+    return "Respectfully, the shopping mall won against your bank account this month.";
   };
 
-  // -- SHARE EXPORT --
-  const generateSharePreview = async () => {
-    if (!shareCardRef.current) return;
+  const handleTriggerRoast = async () => {
+    if (!summary || summary.transaction_count === 0) return;
+    setIsRoasting(true);
     try {
-      setIsGeneratingShare(true);
-      setShareError(null);
-      // Clean up previous blob URL to prevent leaks
-      if (shareImageUrl) URL.revokeObjectURL(shareImageUrl);
-      
-      const dataUrl = await toPng(shareCardRef.current, { cacheBust: true, width: 1080, height: 1080, style: { transform: 'scale(1)', transformOrigin: 'top left' } });
-      
-      // Convert to blob URL so we can render it safely in the modal
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
-      const objUrl = URL.createObjectURL(blob);
-      setShareImageUrl(objUrl);
-      setIsShareModalOpen(true);
-    } catch (err) {
-      console.error("Image generation failed", err);
-      setShareError("Couldn't generate your Autopsy card. Try again.");
-    } finally {
-      setIsGeneratingShare(false);
-    }
-  };
-
-  const handleNativeShare = async () => {
-    if (!shareImageUrl) return;
-    const filename = "finopsy-money-autopsy.png";
-    if (typeof navigator.share === 'function') {
-      try {
-        const res = await fetch(shareImageUrl);
-        const blob = await res.blob();
-        const file = new File([blob], filename, { type: 'image/png' });
-        
-        if (typeof navigator.canShare === 'function') {
-          if (!navigator.canShare({ files: [file] })) return;
-        }
-
-        await navigator.share({
-          files: [file],
-          title: 'My Finopsy Autopsy',
-          text: 'Check out my financial damage on Finopsy! 💀'
+      const merchantTotals: Record<string, number> = {};
+      transactions
+        .filter((t: any) => t.type === "expense")
+        .forEach((t: any) => {
+          merchantTotals[t.merchant] = (merchantTotals[t.merchant] || 0) + t.amount;
         });
-      } catch (e) {
-        console.log("Web share aborted or failed", e);
+      const topMerchant = Object.entries(merchantTotals).sort((a, b) => b[1] - a[1])[0];
+
+      const severity: "mild" | "savage" | "unhinged" =
+        roastLevel === 1 ? "mild" : roastLevel === 2 ? "savage" : "unhinged";
+
+      const res = await generateRoast({
+        total_spent: summary.total_spending,
+        category_totals: summary.category_totals,
+        category_percentages: summary.category_percentages,
+        top_merchant: topMerchant ? topMerchant[0] : null,
+        top_merchant_amount: topMerchant ? topMerchant[1] : null,
+        transaction_count: summary.transaction_count,
+        severity,
+        seen_roasts: seenRoasts,
+      });
+
+      if (res && res.text) {
+        setAiRoast(res.text);
+        setSeenRoasts((prev) => [...prev, res.text]);
+        setRoastLevel((prev) => (prev >= 3 ? 3 : prev + 1));
       }
-    }
-  };
-
-  const handleCopyImage = async () => {
-    if (!shareImageUrl || !navigator.clipboard) return;
-    try {
-      const res = await fetch(shareImageUrl);
-      const blob = await res.blob();
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
-      alert("Image copied to clipboard!");
     } catch (e) {
-      console.error("Copy failed", e);
-      alert("Copying isn't supported on this browser.");
+      console.error(e);
+    } finally {
+      setIsRoasting(false);
     }
   };
 
-  const closeShareModal = () => {
-    setIsShareModalOpen(false);
-  };
+  // Typewriter effect for roast
+  useEffect(() => {
+    const rawRoast = aiRoast || (summary ? getRoast(summary) : "");
+    if (!rawRoast) {
+      setDisplayedRoast("");
+      return;
+    }
+    let i = 0;
+    setDisplayedRoast("");
+    const interval = setInterval(() => {
+      if (i < rawRoast.length) {
+        setDisplayedRoast(rawRoast.substring(0, i + 1));
+        i++;
+      } else {
+        clearInterval(interval);
+      }
+    }, 15);
+    return () => clearInterval(interval);
+  }, [aiRoast, summary]);
 
-  const topCategory = summary && Object.keys(summary.category_percentages).length > 0
-    ? Object.entries(summary.category_percentages)
-        .map(([name, val]) => ({ name, percentage: val as number }))
-        .sort((a, b) => b.percentage - a.percentage)[0]
+  const topCategoryEntry = summary
+    ? Object.entries(summary.category_totals || {}).sort((a, b) => b[1] - a[1])[0]
     : null;
 
-  const sharePersonality = getMoneyPersonality(summary);
-  const shareRoast = getRoast(summary);
+  const topCategory = topCategoryEntry
+    ? {
+        name: topCategoryEntry[0],
+        percentage:
+          summary?.total_spending && summary.total_spending > 0
+            ? Math.round((topCategoryEntry[1] / summary.total_spending) * 100)
+            : 0,
+      }
+    : null;
+
+  const isAnonymousWithData = !isAuthenticated && !isDemoData && transactions.length > 0;
 
   return (
-    <main className="min-h-screen bg-[#10110f] px-6 py-8 text-[#f6f3e8] sm:px-12 pb-24">
-      {/* Invisible render target for the Share Card */}
-      <div style={{ position: 'fixed', left: '-10000px', top: 0 }}>
-        <div ref={shareCardRef}>
-          {summary && (
-            <ShareCard
-              totalSpent={summary.total_spending}
-              topCategory={topCategory}
-              moneyPersonality={sharePersonality}
-              roast={shareRoast}
-              transactionCount={summary.transaction_count}
-              username={profile?.username || undefined}
-            />
-          )}
+    <>
+      <FinopsyIntro />
+
+      <main className="min-h-screen bg-[#0A0B0A] text-[#F4F3EE] px-4 sm:px-8 lg:px-12 py-6 pb-24">
+        {/* Hidden 1080x1080 Render Target for html-to-image */}
+        <div style={{ position: "fixed", left: "-10000px", top: 0 }}>
+          <div ref={shareCardRef}>
+            {summary && (
+              <ShareCard
+                totalSpent={summary.total_spending}
+                topCategory={topCategory}
+                moneyPersonality={getMoneyPersonality(summary)}
+                roast={displayedRoast || getRoast(summary)}
+                transactionCount={summary.transaction_count}
+                username={profile?.username || undefined}
+              />
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Global File Input */}
-      <input type="file" ref={fileInputRef} className="hidden" accept=".csv,.xlsx,.xls,.pdf" onChange={handleFileUpload} />
+        {/* Global File Input */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          className="hidden"
+          accept=".csv,.xlsx,.xls,.pdf"
+          onChange={handleFileUpload}
+        />
 
-      {/* Header */}
-      <nav className="mx-auto flex max-w-6xl items-center justify-between">
-        <button 
-          onClick={() => {
-            if (isAuthenticated && transactions.length > 0) navigate("dashboard");
-            else navigate("landing");
-          }} 
-          className="text-xl font-black tracking-tight hover:text-[#d5ff51] transition"
-        >
-          FINOPSY
-        </button>
-        <div className="flex items-center gap-4">
-          {!isAuthenticated && <span className="hidden sm:inline rounded-full border border-[#f6f3e833] px-3 py-1 text-xs text-[#c9c6ba]">No bank login. No BS.</span>}
-          {isAuthenticated ? (
-            <button onClick={() => setIsSettingsOpen(true)} className="rounded-full border border-[#f6f3e833] px-4 py-1 text-sm font-bold text-[#c9c6ba] hover:text-[#d5ff51] hover:border-[#d5ff51] transition">
-              {profile?.username ? `@${profile.username}` : "Settings"} ⚙️
-            </button>
-          ) : (
-            <button onClick={() => setIsAuthModalOpen(true)} className="rounded-full border border-[#f6f3e833] px-4 py-1 text-sm font-bold text-[#c9c6ba] hover:text-[#d5ff51] hover:border-[#d5ff51] transition">
-              Log In
-            </button>
-          )}
-        </div>
-      </nav>
-
-      {view === "landing" && (
-        <section className="mx-auto grid max-w-6xl gap-12 py-16 lg:grid-cols-2 lg:items-center lg:py-20">
-          <div>
-            <p className="mb-4 text-sm font-bold uppercase tracking-[0.2em] text-[#d5ff51]">Student money diagnostics</p>
-            <h1 className="max-w-xl text-6xl font-black leading-[0.92] tracking-[-0.07em] sm:text-8xl">Your Money.<br /><span className="text-[#d5ff51]">Autopsied.</span></h1>
-            <p className="mt-7 max-w-md text-lg text-[#c9c6ba]">Where the hell did your money go? Upload a statement or add an expense. We’ll show the damage.</p>
-            <div className="mt-9 flex flex-wrap gap-3">
-              <button disabled={loading} onClick={handleDemo} className="rounded-full bg-[#d5ff51] px-5 py-3 font-bold text-[#10110f] transition hover:scale-105">
-                {loading ? "Loading..." : "Try Demo Autopsy →"}
-              </button>
-              
-              {!isAuthenticated && transactions.length > 0 && !isDemoData && (
-                <button onClick={() => setIsAuthModalOpen(true)} className="rounded-full bg-white px-5 py-2 text-sm font-bold text-[#10110f] hover:bg-[#d5ff51] transition animate-pulse">
-                  Save My Autopsy
-                </button>
-              )}
-              <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="rounded-full border border-[#f6f3e855] px-5 py-3 font-bold hover:bg-[#f6f3e811]">
-                Upload Statement
-              </button>
-
-              <button onClick={() => navigate("quick-add")} className="rounded-full border border-[#f6f3e855] px-5 py-3 font-bold hover:bg-[#f6f3e811]">Quick Add Expense</button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {view === "upload-loading" && (
-        <section className="mx-auto flex max-w-lg flex-col items-center justify-center py-32 text-center">
-           {pdfPasswordRequired ? (
-             <div className="bg-[#1a1b19] p-8 border-l-4 border-l-[#d5ff51] text-left shadow-2xl relative w-full">
-               <h3 className="text-xl font-bold text-[#f6f3e8] uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <svg className="w-6 h-6 text-[#d5ff51]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-                  This PDF is protected
-               </h3>
-               <p className="text-[#8b8b80] mb-6">Enter the password provided by your bank to unlock the statement. We decrypt this locally in memory and never save your password.</p>
-               <div className="flex flex-col gap-4">
-                 <input 
-                   type="password" 
-                   value={pdfPassword} 
-                   onChange={(e) => setPdfPassword(e.target.value)} 
-                   placeholder="Password"
-                   className="bg-[#10110f] text-[#f6f3e8] border border-[#30312f] p-4 font-mono w-full focus:outline-none focus:border-[#d5ff51] transition-colors"
-                   onKeyDown={(e) => e.key === 'Enter' && handlePdfPasswordSubmit()}
-                 />
-                 <div className="flex gap-4">
-                   <button 
-                     onClick={() => { setPdfPasswordRequired(false); setPendingPdfFile(null); navigate("landing"); }}
-                     className="flex-1 border border-[#30312f] text-[#f6f3e8] py-4 font-bold uppercase tracking-widest hover:bg-[#20211f] transition-all"
-                   >
-                     Cancel
-                   </button>
-                   <button 
-                     onClick={handlePdfPasswordSubmit}
-                     className="flex-1 bg-[#d5ff51] text-[#10110f] py-4 font-bold uppercase tracking-widest hover:bg-[#c2ef30] transition-all"
-                   >
-                     Unlock
-                   </button>
-                 </div>
-               </div>
-               {uploadError && <p className="text-red-500 mt-4 text-sm font-bold">{uploadError}</p>}
-             </div>
-           ) : uploadError ? (
-             <>
-               <div className="h-16 w-16 rounded-full border-4 border-red-500/20 border-t-red-500 mb-6" />
-               <p className="text-xl font-bold text-red-400">{uploadError}</p>
-               <div className="mt-8 flex gap-4 justify-center">
-                 <button onClick={handleCancelUpload} className="rounded-full border border-[#f6f3e855] px-6 py-2 font-bold hover:bg-[#f6f3e811]">Cancel</button>
-                 <button onClick={() => fileInputRef.current?.click()} className="rounded-full bg-[#d5ff51] px-6 py-2 font-bold text-[#10110f]">Try Again</button>
-               </div>
-             </>
-           ) : (
-             <>
-               <div className="h-16 w-16 animate-spin rounded-full border-4 border-[#10110f22] border-t-[#d5ff51]" />
-               <p className="mt-6 text-xl font-bold tracking-tight">Extracting financial damage...</p>
-             </>
-           )}
-        </section>
-      )}
-
-      {view === "review-upload" && uploadMetadata && (
-        <section className="mx-auto max-w-5xl py-12">
-          <button onClick={handleCancelUpload} className="mb-6 text-sm font-bold text-[#c9c6ba] hover:text-[#f6f3e8]">← Back to Safety</button>
-          
-          <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div>
-              <h2 className="text-4xl font-black tracking-tight">Review Upload</h2>
-              <p className="mt-2 text-[#c9c6ba]">
-                We found <strong className="text-[#f6f3e8]">{uploadMetadata.parsed_rows}</strong> transactions out of {uploadMetadata.total_rows} rows.
-                {uploadMetadata.skipped_rows > 0 && ` Skipped ${uploadMetadata.skipped_rows} invalid/empty rows.`}
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={handleCancelUpload} className="rounded-full border border-[#f6f3e855] px-6 py-3 font-bold hover:bg-[#f6f3e811]">Discard</button>
-              <button onClick={handleConfirmUpload} disabled={pendingUploadTransactions.length === 0} className="rounded-full bg-[#d5ff51] px-6 py-3 font-bold text-[#10110f] disabled:opacity-50">Confirm & Analyze</button>
-            </div>
-          </div>
-
-          {uploadMetadata.warnings?.length > 0 && (
-            <div className="mb-8 rounded-2xl bg-red-500/10 p-5 border border-red-500/20">
-              <p className="mb-2 text-sm font-bold text-red-400 uppercase tracking-widest">Parser Warnings</p>
-              <ul className="list-inside list-disc space-y-1 text-sm text-red-300">
-                {uploadMetadata.warnings.slice(0, 5).map((w: string, i: number) => (
-                  <li key={i}>{w}</li>
-                ))}
-                {uploadMetadata.warnings.length > 5 && <li>...and {uploadMetadata.warnings.length - 5} more</li>}
-              </ul>
-            </div>
-          )}
-
-          <div className="rounded-3xl border border-[#f6f3e822] bg-[#f6f3e805] overflow-hidden">
-            <div className="max-h-[60vh] overflow-y-auto p-4 space-y-2">
-              {pendingUploadTransactions.length === 0 ? (
-                <p className="p-4 text-center text-[#c9c6ba]">No valid transactions found to import.</p>
-              ) : (
-                pendingUploadTransactions.map((txn, i) => {
-                  const isEditing = editingRowIndex === i;
-                  const isHighConfidence = (txn.category_confidence ?? 1.0) >= 0.8;
-                  
-                  if (isEditing) {
-                    return (
-                      <div key={i} className="flex flex-col gap-3 rounded-xl bg-[#1a1b19] p-4 border border-[#d5ff51] mb-2">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Merchant</label>
-                             <input type="text" value={txn.merchant} onChange={(e) => handlePendingEdit(i, 'merchant', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm font-bold w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]" />
-                          </div>
-                          <div>
-                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Date</label>
-                             <input type="date" value={txn.date} onChange={(e) => handlePendingEdit(i, 'date', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]" />
-                          </div>
-                          <div>
-                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Amount (₹)</label>
-                             <input type="number" value={txn.amount} onChange={(e) => handlePendingEdit(i, 'amount', parseFloat(e.target.value) || 0)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]" />
-                          </div>
-                          <div>
-                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Type</label>
-                             <select value={txn.type} onChange={(e) => handlePendingEdit(i, 'type', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]">
-                               <option value="expense">Expense</option>
-                               <option value="income">Income</option>
-                             </select>
-                          </div>
-                          <div className="col-span-2">
-                             <label className="text-xs text-[#8b8b80] uppercase tracking-wider font-bold mb-1 block">Category</label>
-                             <select value={txn.category} onChange={(e) => handlePendingEdit(i, 'category', e.target.value)} className="bg-[#10110f] border border-[#30312f] rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-[#d5ff51] text-[#f6f3e8]">
-                               {Object.keys(CATEGORY_COLORS).map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                             </select>
-                          </div>
-                        </div>
-                        <div className="flex justify-end gap-2 mt-2">
-                          <button onClick={() => { handlePendingDelete(i); setEditingRowIndex(null); }} className="px-4 py-2 text-red-400 hover:text-red-300 text-sm font-bold uppercase tracking-wider">Remove</button>
-                          <button onClick={() => setEditingRowIndex(null)} className="px-4 py-2 bg-[#d5ff51] text-[#10110f] hover:bg-[#c2ef30] rounded text-sm font-bold uppercase tracking-wider transition-colors">Save</button>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={i} className="flex items-center gap-3 rounded-xl bg-[#10110f] p-3 border border-transparent hover:border-[#f6f3e822] transition-colors mb-1">
-                      <div className="flex-none">
-                        {isHighConfidence ? (
-                          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#d5ff51]/20 text-[#d5ff51] text-sm">✓</span>
-                        ) : (
-                          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-500/20 text-yellow-500 text-sm font-bold" title="Low confidence category match">⚠</span>
-                        )}
-                      </div>
-                      <div className="w-24 flex-none text-sm text-[#8b8b80]">{txn.date}</div>
-                      <div className="flex-1 font-bold text-[#f6f3e8] truncate" title={txn.merchant}>{txn.merchant}</div>
-                      <div className="w-24 flex-none font-black text-right">{txn.type === 'income' ? '+' : ''}₹{txn.amount?.toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}</div>
-                      <div className="w-32 flex-none flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${CATEGORY_COLORS[txn.category] || CATEGORY_COLORS["Other"]}`} />
-                        <span className="text-sm text-[#c9c6ba] truncate">{txn.category}</span>
-                      </div>
-                      <div className="flex-none">
-                        <button onClick={() => setEditingRowIndex(i)} className="text-[#8b8b80] hover:text-[#f6f3e8] text-sm font-bold uppercase tracking-wider px-3 py-1 rounded hover:bg-[#f6f3e811] transition-colors border border-[#f6f3e833]">Edit</button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {view === "quick-add" && (
-        <section className="mx-auto max-w-lg py-16">
-          <button onClick={() => navigate(transactions.length > 0 ? "dashboard" : "landing")} className="mb-6 text-sm font-bold text-[#c9c6ba] hover:text-[#f6f3e8]">← Back</button>
-          <div className="rounded-[2rem] bg-[#f6f3e8] p-8 text-[#10110f] shadow-2xl">
-            <h2 className="text-3xl font-black tracking-tight">Quick Add Expense</h2>
-            <form onSubmit={handleQuickAddSubmit} className="mt-8 space-y-6">
-              <div>
-                <label className="mb-2 block text-sm font-bold">Amount (₹)</label>
-                <input required type="number" step="0.01" min="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full rounded-xl border-2 border-[#10110f22] bg-transparent p-4 text-xl font-bold focus:border-[#d5ff51] focus:outline-none" placeholder="250.00" />
+        {/* ========================================================================= */}
+        {/* VIEW 1: LANDING PAGE                                                      */}
+        {/* ========================================================================= */}
+        {view === "landing" && (
+          <div className="max-w-6xl mx-auto space-y-24">
+            {/* Top Navigation Bar */}
+            <header className="flex items-center justify-between py-6 border-b border-[rgba(255,255,255,0.06)]">
+              <div className="flex items-center gap-3">
+                <span className="font-display text-xl font-extrabold tracking-tight text-[#F4F3EE]">
+                  FINOPSY
+                </span>
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-bold">Merchant</label>
-                <input required type="text" value={merchant} onChange={(e) => setMerchant(e.target.value)} className="w-full rounded-xl border-2 border-[#10110f22] bg-transparent p-4 font-bold focus:border-[#d5ff51] focus:outline-none" placeholder="Swiggy, Uber, etc." />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-bold">Category</label>
-                <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-xl border-2 border-[#10110f22] bg-transparent p-4 font-bold focus:border-[#d5ff51] focus:outline-none">
-                  {Object.keys(CATEGORY_COLORS).map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-4 pt-4">
-                <button type="button" onClick={handleUndoQuickAdd} className="w-full rounded-full border-2 border-[#10110f] py-4 font-bold">Cancel</button>
-                <button disabled={loading} type="submit" className="w-full rounded-full bg-[#10110f] py-4 font-bold text-[#f6f3e8]">
-                  {loading ? "Adding..." : "Add Expense"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </section>
-      )}
 
-      {view === "confirmation" && lastAddedTransaction && (
-        <section className="mx-auto max-w-lg py-16 text-center">
-          <p className="mb-4 text-sm font-bold uppercase tracking-[0.2em] text-[#d5ff51]">Expense Recorded! 💀</p>
-          <div className="rounded-[2rem] bg-[#f6f3e8] p-8 text-[#10110f] shadow-2xl">
-            <p className="text-5xl font-black">₹{lastAddedTransaction.amount}</p>
-            <p className="mt-2 font-bold text-[#5c5c54]">at {lastAddedTransaction.merchant}</p>
-            
-            <div className="mt-8 rounded-2xl bg-[#10110f] p-5 text-[#f6f3e8] text-left">
-              <p className="text-xs font-bold text-[#d5ff51]">THE VERDICT</p>
-              <p className="mt-2 text-sm font-bold">{ROASTS[lastAddedTransaction.category] || ROASTS["Other"]}</p>
-            </div>
-
-            <div className="mt-8 space-y-3">
-              <button onClick={handleConfirmQuickAdd} className="w-full rounded-full bg-[#d5ff51] py-4 font-bold">Confirm & View Dashboard</button>
-              <button onClick={handleAddAnother} className="w-full rounded-full border-2 border-[#10110f] py-4 font-bold">Confirm & Add Another</button>
-              <button onClick={handleUndoQuickAdd} className="w-full font-bold text-[#5c5c54] underline hover:text-[#10110f]">Undo (Discard)</button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {view === "dashboard" && (
-        <section className="mx-auto max-w-6xl py-12">
-          <button onClick={() => navigate("landing")} className="mb-6 text-sm font-bold text-[#c9c6ba] hover:text-[#f6f3e8]">← Back to Landing</button>
-          
-          <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <h2 className="text-4xl font-black tracking-tight">Dashboard</h2>
-            <div className="flex flex-wrap items-center gap-3">
-              <button onClick={() => fileInputRef.current?.click()} className="rounded-full border border-[#f6f3e855] px-5 py-2 text-sm font-bold hover:bg-[#f6f3e811]">
-                Upload CSV
-              </button>
-              <button onClick={() => navigate("quick-add")} className="rounded-full border border-[#f6f3e855] px-5 py-2 text-sm font-bold hover:bg-[#f6f3e811]">
-                + Quick Add
-              </button>
-              
-              {summary && summary.transaction_count > 0 && (
-                <button
-                  onClick={generateSharePreview}
-                  disabled={isGeneratingShare}
-                  className="rounded-full bg-[#d5ff51] px-6 py-2 text-sm font-bold text-[#10110f] hover:scale-105 transition disabled:opacity-50 disabled:hover:scale-100"
-                >
-                  {isGeneratingShare ? "Generating your Autopsy..." : "Share My Autopsy 📸"}
-                </button>
-              )}
-            </div>
-          </div>
-          
-          <div className="grid gap-8 lg:grid-cols-3">
-            <div className="lg:col-span-2 space-y-8">
-              {/* Transactions List */}
-              <div className="rounded-3xl border border-[#f6f3e822] p-6">
-                <h3 className="mb-4 text-xl font-bold">Recent Transactions</h3>
-                {transactions.length === 0 ? (
-                  <p className="text-[#c9c6ba]">No transactions yet. Add some to see the damage.</p>
+              <div className="flex items-center gap-3">
+                {isAuthenticated ? (
+                  <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="font-mono-num text-xs text-[#8E9089] hover:text-[#F4F3EE] px-3 py-1.5 rounded border border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)] transition"
+                  >
+                    @{profile?.username || "user"}
+                  </button>
                 ) : (
-                  <div className="space-y-4">
-                    {transactions.slice().reverse().map((txn, idx) => (
-                      <div key={txn.id || idx} className="flex items-center justify-between rounded-xl bg-[#f6f3e80a] p-4">
-                        <div>
-                          <p className="font-bold">{txn.merchant}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-[#c9c6ba]">{txn.date}</span>
-                            <span className={`h-2 w-2 rounded-full ${CATEGORY_COLORS[txn.category] || CATEGORY_COLORS["Other"]}`} />
-                            <span className="text-xs text-[#c9c6ba]">{txn.category}</span>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className={`font-black ${txn.type === 'income' ? 'text-green-400' : ''}`}>
-                            {txn.type === 'expense' ? '-' : '+'}₹{txn.amount}
-                          </p>
-                          <button onClick={() => handleDeleteTransaction(txn.id)} className="mt-1 text-xs text-red-400 hover:underline">Delete</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="font-sans text-xs text-[#8E9089] hover:text-[#F4F3EE] px-3.5 py-1.5 rounded border border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)] transition"
+                  >
+                    Sign In
+                  </button>
+                )}
+
+                {transactions.length > 0 && (
+                  <button
+                    onClick={() => navigate("dashboard")}
+                    className="btn-secondary text-xs py-1.5 px-3.5"
+                  >
+                    Dashboard
+                  </button>
                 )}
               </div>
+            </header>
+
+            {/* Hero Section */}
+            <section className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center py-4 sm:py-8">
+              <div className="lg:col-span-7 flex flex-col justify-center pr-0 lg:pr-6">
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <span className="font-mono-num text-[10px] text-[#0A0B0A] bg-[#D4FF00] font-bold px-2 py-0.5 rounded shadow-sm">
+                    TOP KILLER: SHOPPING
+                  </span>
+                  <span className="font-mono-num text-[10px] text-[#F4F3EE] bg-white/10 font-bold px-2 py-0.5 rounded border border-white/10">
+                    CASUALTY: ₹27,205
+                  </span>
+                  <span className="font-mono-num text-[10px] text-[#FF4560] bg-[#FF4560]/10 font-bold px-2 py-0.5 rounded border border-[#FF4560]/20">
+                    VAMPIRES DETECTED
+                  </span>
+                </div>
+
+                <h1 className="font-display text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-[#F4F3EE] leading-[1.02] mb-6">
+                  Your money.
+                  <br />
+                  <span className="text-[#D4FF00]">Autopsied.</span>
+                </h1>
+
+                <p className="font-sans text-base sm:text-lg text-[#8E9089] max-w-lg mb-9 leading-relaxed">
+                  Upload your bank statement. Finopsy calculates the damage, exposes the vampires, and delivers a brutally honest diagnosis.
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5">
+                  <button
+                    onClick={handleDemo}
+                    disabled={loading}
+                    className="btn-primary text-sm py-3 px-7"
+                  >
+                    {loading ? "Loading..." : "Try Live Demo"}
+                  </button>
+
+                  <button
+                    onClick={() => navigate("upload-beta")}
+                    className="btn-secondary text-sm py-3 px-7 flex items-center justify-center gap-2"
+                  >
+                    <span>Upload Statement</span>
+                    <span className="font-mono-num text-[10px] font-extrabold uppercase bg-[#D4FF00]/15 text-[#D4FF00] px-1.5 py-0.5 rounded border border-[#D4FF00]/30">
+                      BETA
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="lg:col-span-5 flex justify-center w-full">
+                <ThermalReceiptVisual />
+              </div>
+            </section>
+
+            {/* Live Decoder */}
+            <section className="border-t border-[rgba(255,255,255,0.06)] pt-16 text-center space-y-8">
+              <div className="max-w-xl mx-auto space-y-2">
+                <span className="font-mono-num text-xs text-[#D4FF00] font-bold uppercase tracking-wider block">
+                  Act 02 • The Live Decoder
+                </span>
+                <h2 className="font-display text-3xl font-extrabold text-[#F4F3EE]">
+                  Unmasking The Noise
+                </h2>
+                <p className="text-xs text-[#8E9089] leading-relaxed">
+                  Watch cryptic UPI reference strings glitch and transform into clean merchant names in real-time.
+                </p>
+              </div>
+              <LaserScannerVisual />
+            </section>
+
+            {/* Verdict Engine */}
+            <section className="border-t border-[rgba(255,255,255,0.06)] pt-16 text-center space-y-8">
+              <div className="max-w-xl mx-auto space-y-2">
+                <span className="font-mono-num text-xs text-[#D4FF00] font-bold uppercase tracking-wider block">
+                  Act 03 • The Verdict Engine
+                </span>
+                <h2 className="font-display text-3xl font-extrabold text-[#F4F3EE]">
+                  The Honest Diagnosis
+                </h2>
+                <p className="text-xs text-[#8E9089] leading-relaxed">
+                  Finopsy doesn&apos;t just categorize your spending. It delivers a razor-sharp commentary on where it went.
+                </p>
+              </div>
+              <InteractiveRoastVisual />
+            </section>
+
+            {/* Subscription Vampire Detector */}
+            <section className="border-t border-[rgba(255,255,255,0.06)] pt-16 text-center space-y-8">
+              <div className="max-w-xl mx-auto space-y-2">
+                <span className="font-mono-num text-xs text-[#D4FF00] font-bold uppercase tracking-wider block">
+                  Act 04 • Silent Drains
+                </span>
+                <h2 className="font-display text-3xl font-extrabold text-[#F4F3EE]">
+                  The Vampire Detector
+                </h2>
+                <p className="text-xs text-[#8E9089] leading-relaxed">
+                  Expose recurring card charges and projected annual leakage before next month hits.
+                </p>
+              </div>
+              <SubscriptionStackVisual />
+            </section>
+
+            {/* Bottom CTA */}
+            <section className="border-t border-[rgba(255,255,255,0.06)] pt-16 pb-12 text-center space-y-6">
+              <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[#F4F3EE]">
+                Ready for your autopsy?
+              </h2>
+              <p className="text-xs sm:text-sm text-[#8E9089] max-w-md mx-auto">
+                No bank credentials required. Upload a statement or start with the live demo.
+              </p>
+              <div className="flex flex-col sm:flex-row justify-center gap-3.5 pt-2">
+                <button onClick={handleDemo} className="btn-primary text-sm py-3 px-8">
+                  Try Live Demo
+                </button>
+                <button onClick={() => navigate("upload-beta")} className="btn-secondary text-sm py-3 px-8">
+                  Upload Statement [BETA]
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 2: DASHBOARD                                                         */}
+        {/* ========================================================================= */}
+        {view === "dashboard" && (
+          <div className="max-w-5xl mx-auto space-y-8 animate-fadeIn">
+            {/* HEADER */}
+            <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[rgba(255,255,255,0.06)] pb-4">
+              <div className="flex items-center gap-6">
+                <button
+                  onClick={() => navigate("landing")}
+                  className="font-display text-xl font-extrabold tracking-tight text-[#F4F3EE] hover:text-[#D4FF00] transition"
+                >
+                  FINOPSY
+                </button>
+
+                {/* TAB SWITCHER */}
+                <nav className="flex items-center gap-1 bg-[#121312] p-1 rounded-lg border border-[rgba(255,255,255,0.06)]">
+                  <button
+                    onClick={() => setDashboardTab("overview")}
+                    className={`font-sans text-xs font-semibold px-3 py-1.5 rounded-md transition ${
+                      dashboardTab === "overview"
+                        ? "bg-[#1F201E] text-[#F4F3EE]"
+                        : "text-[#8E9089] hover:text-[#F4F3EE]"
+                    }`}
+                  >
+                    Overview
+                  </button>
+                  <button
+                    onClick={() => setDashboardTab("transactions")}
+                    className={`font-sans text-xs font-semibold px-3 py-1.5 rounded-md transition ${
+                      dashboardTab === "transactions"
+                        ? "bg-[#1F201E] text-[#F4F3EE]"
+                        : "text-[#8E9089] hover:text-[#F4F3EE]"
+                    }`}
+                  >
+                    Ledger ({transactions.length})
+                  </button>
+                  <button
+                    onClick={() => setDashboardTab("insights")}
+                    className={`font-sans text-xs font-semibold px-3 py-1.5 rounded-md transition ${
+                      dashboardTab === "insights"
+                        ? "bg-[#1F201E] text-[#F4F3EE]"
+                        : "text-[#8E9089] hover:text-[#F4F3EE]"
+                    }`}
+                  >
+                    Insights
+                  </button>
+                </nav>
+              </div>
+
+              {/* ACTIONS */}
+              <div className="flex items-center gap-2.5">
+                {isAnonymousWithData && (
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="font-mono-num text-xs font-bold bg-[#D4FF00] text-[#0A0B0A] px-3 py-1.5 rounded hover:bg-[#b8e000] transition shadow-sm"
+                  >
+                    Save My Autopsy
+                  </button>
+                )}
+
+                <button
+                  onClick={() => navigate("upload-beta")}
+                  className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                >
+                  <span>Upload</span>
+                  <span className="font-mono-num text-[9px] font-bold text-[#D4FF00]">BETA</span>
+                </button>
+
+                <button
+                  onClick={() => navigate("quick-add")}
+                  className="btn-secondary text-xs py-1.5 px-3"
+                >
+                  + Add
+                </button>
+
+                {summary && summary.transaction_count > 0 && (
+                  <button
+                    onClick={() => setIsShareModalOpen(true)}
+                    className="btn-primary text-xs py-1.5 px-3.5"
+                  >
+                    Autopsy Report
+                  </button>
+                )}
+
+                <button
+                  onClick={() => (isAuthenticated ? setIsSettingsOpen(true) : setIsAuthModalOpen(true))}
+                  className="btn-ghost text-xs font-mono-num"
+                >
+                  {isAuthenticated ? `@${profile?.username || "user"}` : "Sign In"}
+                </button>
+              </div>
+            </header>
+
+            {/* TAB CONTENT */}
+            {dashboardTab === "overview" && (
+              <OverviewTab
+                summary={summary || { total_spending: 0, total_income: 0, remaining: 0, transaction_count: 0, category_totals: {}, category_percentages: {}, daily_spending: [], subscriptions: [] }}
+                username={profile?.username}
+                roast={displayedRoast || getRoast(summary)}
+                isRoasting={isRoasting}
+                roastLevel={roastLevel}
+                transactions={transactions}
+                onRegenerateRoast={handleTriggerRoast}
+                onOpenAutopsy={() => setIsShareModalOpen(true)}
+                onUploadClick={() => navigate("upload-beta")}
+                onDemoClick={handleDemo}
+                onQuickAdd={handleOverviewQuickAdd}
+              />
+            )}
+
+            {dashboardTab === "transactions" && (
+              <TransactionsTab
+                transactions={transactions}
+                onDeleteTransaction={handleDeleteTransaction}
+                onUploadClick={() => navigate("upload-beta")}
+                onAddClick={() => navigate("quick-add")}
+              />
+            )}
+
+            {dashboardTab === "insights" && (
+              <InsightsTab
+                summary={summary || { total_spending: 0, total_income: 0, remaining: 0, transaction_count: 0, category_totals: {}, category_percentages: {}, daily_spending: [], subscriptions: [] }}
+                isDemo={isDemoData}
+              />
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 3: UPLOAD STATEMENT                                                  */}
+        {/* ========================================================================= */}
+        {view === "upload-beta" && (
+          <div className="max-w-xl mx-auto py-12 animate-fadeIn">
+            <button
+              onClick={() => navigate(transactions.length > 0 ? "dashboard" : "landing")}
+              className="text-xs text-[#8E9089] hover:text-[#F4F3EE] mb-6 block font-medium"
+            >
+              ← Back
+            </button>
+
+            <div className="surface-card p-7 sm:p-9 border border-[rgba(255,255,255,0.08)] bg-[#121312]">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-mono-num text-[11px] text-[#D4FF00] font-semibold uppercase tracking-wider block">
+                  Statement Ingestion
+                </span>
+                <span className="font-mono-num text-[9px] font-extrabold uppercase bg-[#D4FF00]/15 text-[#D4FF00] px-1.5 py-0.2 rounded border border-[#D4FF00]/30">
+                  BETA
+                </span>
+              </div>
+              <h2 className="font-display text-2xl font-bold text-[#F4F3EE] mb-2">
+                Upload Bank Statement
+              </h2>
+              <p className="text-xs text-[#8E9089] mb-7 leading-relaxed">
+                Download your statement from your banking app (PDF, CSV, or XLSX). We parse and categorize your spending locally.
+              </p>
+
+              {/* Dropzone */}
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.25)] bg-[#181918] p-9 text-center rounded-lg cursor-pointer transition mb-6"
+              >
+                <p className="font-sans text-sm font-semibold text-[#F4F3EE] mb-1">
+                  Choose a statement file
+                </p>
+                <p className="text-xs text-[#8E9089]">
+                  PDF, CSV, or XLSX formats (Max 10MB)
+                </p>
+              </div>
+
+              <div className="text-xs text-[#8E9089] border-t border-[rgba(255,255,255,0.06)] pt-4 space-y-1 font-mono-num">
+                <p>Supports: HDFC, Kotak, ICICI, SBI, Axis, and all Indian UPI statements.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 4: AUTOPSY LOADING SCREEN                                            */}
+        {/* ========================================================================= */}
+        {view === "upload-loading" && (
+          <AutopsyLoadingScreen
+            isEncrypted={pdfPasswordRequired}
+            errorMessage={uploadError}
+            onPasswordSubmit={handlePdfPasswordSubmit}
+            onRetry={() => navigate("upload-beta")}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 5: REVIEW UPLOAD (WITH PARTIAL PARSE HANDLER)                        */}
+        {/* ========================================================================= */}
+        {view === "review-upload" && (
+          <div className="max-w-4xl mx-auto py-8 space-y-6 animate-fadeIn">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[rgba(255,255,255,0.06)] pb-4">
+              <div>
+                <h2 className="font-display text-2xl font-bold text-[#F4F3EE]">
+                  Review Statement Entries
+                </h2>
+                <p className="text-xs text-[#8E9089] mt-0.5">
+                  Check extracted entries before adding to your dashboard
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleResolveUnknowns}
+                  disabled={isResolving}
+                  className="btn-secondary text-xs py-2 px-3.5"
+                >
+                  {isResolving ? "Resolving..." : "Clean Merchants"}
+                </button>
+
+                <button
+                  onClick={handleConfirmUpload}
+                  className="btn-primary text-xs py-2 px-5 font-semibold"
+                >
+                  Import {pendingUploadTransactions.length} Transactions
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-8">
-              {/* Autopsy Card */}
-              <aside className="rounded-[2rem] bg-[#f6f3e8] p-7 text-[#10110f] shadow-2xl">
-                <p className="text-xs font-bold tracking-widest">AUTOPSY RESULT</p>
-                <p className="mt-8 text-5xl font-black">₹{summary?.total_spending || 0}</p>
-                <p className="font-bold text-[#5c5c54]">TOTAL SPENT</p>
-                
-                <div className="my-7 h-px bg-[#10110f22]" />
-                
-                <p className="text-sm font-bold">WHERE DID IT GO?</p>
-                <div className="mt-4 space-y-3">
-                  {summary && Object.entries(summary.category_percentages).sort((a: any, b: any) => b[1] - a[1]).map(([name, value]: any) => (
-                    <div key={name}>
-                      <div className="mb-1 flex justify-between text-sm">
-                        <span>{name}</span>
-                        <b>{value}%</b>
-                      </div>
-                      <div className="h-2 rounded-full bg-[#10110f15]">
-                        <div className={`h-2 rounded-full ${CATEGORY_COLORS[name] || CATEGORY_COLORS["Other"]}`} style={{ width: `${value}%` }} />
-                      </div>
-                    </div>
+            {/* Partial Parse Warning Banner */}
+            {uploadStats && uploadStats.skipped > 0 && (
+              <div className="bg-[#1C1612] border border-[#FFB347]/30 p-4 rounded-xl flex items-center justify-between text-xs animate-fadeIn">
+                <div>
+                  <span className="font-mono-num text-[11px] font-bold text-[#FFB347] block mb-0.5 uppercase">
+                    WE FOUND MOST OF IT.
+                  </span>
+                  <span className="text-[#8E9089]">
+                    {uploadStats.parsed} transactions imported. {uploadStats.skipped} rows couldn&apos;t be read.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Extracted table */}
+            <div className="surface-card p-4 border border-[rgba(255,255,255,0.06)] overflow-x-auto">
+              <table className="w-full text-left font-sans text-xs">
+                <thead>
+                  <tr className="border-b border-[rgba(255,255,255,0.06)] text-[#8E9089] text-[11px]">
+                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3">Merchant</th>
+                    <th className="py-2.5 px-3">Category</th>
+                    <th className="py-2.5 px-3 text-right">Amount</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[rgba(255,255,255,0.04)]">
+                  {pendingUploadTransactions.map((txn, idx) => (
+                    <tr key={idx} className="hover:bg-[#181918] transition-colors">
+                      <td className="py-2.5 px-3 font-mono-num text-[#8E9089]">{txn.date}</td>
+                      <td className="py-2.5 px-3 font-medium text-[#F4F3EE]">{txn.merchant}</td>
+                      <td className="py-2.5 px-3">
+                        <select
+                          value={txn.category}
+                          onChange={(e) => handlePendingEdit(idx, "category", e.target.value)}
+                          className="bg-[#121312] border border-[rgba(255,255,255,0.08)] text-[#F4F3EE] text-xs px-2 py-1 rounded"
+                        >
+                          {CATEGORIES_LIST.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-2.5 px-3 font-mono-num font-semibold text-right text-[#F4F3EE]">
+                        ₹{txn.amount.toLocaleString("en-IN")}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          onClick={() => handlePendingDelete(idx)}
+                          className="text-[#8E9089] hover:text-[#FF4560] text-xs"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
                   ))}
-                  {!summary && <p className="text-sm text-[#5c5c54]">No data to analyze.</p>}
-                </div>
+                </tbody>
+              </table>
+            </div>
 
-                <div className="mt-8 rounded-2xl bg-[#10110f] p-5 text-[#f6f3e8]">
-                  <p className="text-xs font-bold text-[#d5ff51]">MONEY PERSONALITY</p>
-                  <p className="mt-2 text-2xl font-black">{sharePersonality}</p>
-                </div>
-              </aside>
+            <div className="flex justify-between items-center text-xs text-[#8E9089] pt-2">
+              <button onClick={handleCancelUpload} className="hover:text-[#F4F3EE]">
+                ← Cancel
+              </button>
             </div>
           </div>
-        </section>
-      )}
+        )}
 
-      {/* Share Modal */}
-      {isShareModalOpen && shareImageUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#10110f]/90 p-6 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-[#1a1b18] p-6 shadow-2xl border border-[#f6f3e822]">
-            <div className="mb-6 flex items-center justify-between">
-              <h3 className="text-2xl font-black uppercase tracking-tight text-[#d5ff51]">Share Your Autopsy</h3>
-              <button onClick={closeShareModal} className="text-3xl font-black text-[#5c5c54] hover:text-[#f6f3e8]">×</button>
-            </div>
-            
-            <div className="overflow-hidden rounded-xl bg-black mb-6">
-              <img src={shareImageUrl} alt="Finopsy Share Card" className="w-full object-contain" />
-            </div>
+        {/* ========================================================================= */}
+        {/* VIEW 6: QUICK ADD FORM                                                    */}
+        {/* ========================================================================= */}
+        {view === "quick-add" && (
+          <div className="max-w-md mx-auto py-12 animate-fadeIn">
+            <button
+              onClick={() => navigate(transactions.length > 0 ? "dashboard" : "landing")}
+              className="text-xs text-[#8E9089] hover:text-[#F4F3EE] mb-6 block font-medium"
+            >
+              ← Back
+            </button>
 
-            <div className="flex flex-col gap-3">
-              {typeof navigator.share === 'function' && (
-                <button onClick={handleNativeShare} className="w-full rounded-full bg-[#d5ff51] py-4 font-black text-[#10110f] transition hover:scale-[1.02]">
-                  Share Autopsy
-                </button>
-              )}
-              <a href={shareImageUrl} download="finopsy-money-autopsy.png" className="block w-full text-center rounded-full border-2 border-[#f6f3e833] py-4 font-bold hover:bg-[#f6f3e811]">
-                Download PNG
-              </a>
-              {navigator.clipboard && (
-                <button onClick={handleCopyImage} className="w-full text-center text-sm font-bold text-[#5c5c54] underline hover:text-[#f6f3e8]">
-                  Copy Image
-                </button>
-              )}
+            <div className="surface-card p-6 sm:p-8">
+              <h2 className="font-display text-2xl font-bold text-[#F4F3EE] mb-1">
+                Log Expense
+              </h2>
+              <p className="text-xs text-[#8E9089] mb-6">
+                Add an expense manually to update your financial position
+              </p>
+
+              <form onSubmit={handleQuickAddSubmit} className="space-y-4">
+                <div>
+                  <label className="text-[11px] font-mono-num font-bold text-[#8E9089] block mb-1">
+                    Amount (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="250"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="w-full bg-[#121312] border border-[rgba(255,255,255,0.08)] text-sm text-[#F4F3EE] p-3 rounded-lg focus:outline-none focus:border-[rgba(255,255,255,0.2)] font-mono-num"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono-num font-bold text-[#8E9089] block mb-1">
+                    Merchant / Description
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Swiggy, Blue Tokai, Uber..."
+                    value={merchant}
+                    onChange={(e) => setMerchant(e.target.value)}
+                    className="w-full bg-[#121312] border border-[rgba(255,255,255,0.08)] text-sm text-[#F4F3EE] p-3 rounded-lg focus:outline-none focus:border-[rgba(255,255,255,0.2)]"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono-num font-bold text-[#8E9089] block mb-1">
+                    Category
+                  </label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full bg-[#121312] border border-[rgba(255,255,255,0.08)] text-sm text-[#F4F3EE] p-3 rounded-lg focus:outline-none"
+                  >
+                    {CATEGORIES_LIST.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="pt-2">
+                  <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-xs">
+                    {loading ? "Processing..." : "Add Expense"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
-        </div>
-      )}
-      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
-      {isUsernameOnboardingOpen && <UsernameOnboarding />}
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-    </main>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 7: QUICK ADD CONFIRMATION                                            */}
+        {/* ========================================================================= */}
+        {view === "confirmation" && lastAddedTransaction && (
+          <div className="max-w-md mx-auto py-12 animate-fadeIn">
+            <div className="surface-card p-6 sm:p-8 space-y-6 text-center">
+              <div className="w-12 h-12 rounded-full bg-[#D4FF00]/10 text-[#D4FF00] flex items-center justify-center mx-auto text-xl font-bold">
+                ✓
+              </div>
+
+              <div>
+                <span className="font-mono-num text-[11px] text-[#8E9089] uppercase tracking-wider block mb-1">
+                  Recorded Successfully
+                </span>
+                <h3 className="font-display text-2xl font-bold text-[#F4F3EE]">
+                  ₹{lastAddedTransaction.amount.toLocaleString("en-IN")} at {lastAddedTransaction.merchant}
+                </h3>
+                <span className="font-mono-num text-xs text-[#D4FF00] mt-1 inline-block">
+                  Categorized as {lastAddedTransaction.category}
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-2.5 pt-2">
+                <button onClick={handleConfirmQuickAdd} className="btn-primary w-full py-2.5 text-xs">
+                  Go to Dashboard
+                </button>
+                <button onClick={handleAddAnother} className="btn-secondary w-full py-2.5 text-xs">
+                  + Add Another
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modals */}
+        <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+        <UsernameOnboarding isOpen={isUsernameOnboardingOpen} />
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          onDataCleared={handleReset}
+        />
+        {summary && summary.transaction_count > 0 && (
+          <>
+            <ShareModal
+              isOpen={isShareModalOpen}
+              onClose={() => setIsShareModalOpen(false)}
+              summary={summary}
+              username={profile?.username || undefined}
+              initialRoast={displayedRoast || getRoast(summary)}
+              transactions={transactions}
+            />
+            <AutopsyModal
+              isOpen={isAutopsyModalOpen}
+              onClose={() => setIsAutopsyModalOpen(false)}
+              summary={summary}
+              username={profile?.username || undefined}
+              roast={displayedRoast || getRoast(summary)}
+              isRoasting={isRoasting}
+              onOpenShareCard={() => {
+                setIsAutopsyModalOpen(false);
+                setIsShareModalOpen(true);
+              }}
+            />
+          </>
+        )}
+      </main>
+    </>
   );
 }

@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, Request
 from app.supabase_client import get_supabase
 
 async def get_current_user(request: Request) -> dict:
-    """Extract user from Supabase JWT. Returns user dict with 'id' field."""
+    """Extract user from Supabase JWT. Returns user dict with 'id', 'email', and 'token'."""
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         raise HTTPException(status_code=401, detail={"error": {"code": "UNAUTHORIZED", "message": "Missing authentication"}})
@@ -13,7 +13,9 @@ async def get_current_user(request: Request) -> dict:
         response = supabase.auth.get_user(token)
         if not response or not response.user:
             raise HTTPException(status_code=401, detail={"error": {"code": "UNAUTHORIZED", "message": "Invalid authentication credentials"}})
-        return {"id": response.user.id, "email": response.user.email}
+        return {"id": response.user.id, "email": response.user.email, "token": token}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=401, detail={"error": {"code": "UNAUTHORIZED", "message": str(e)}})
 

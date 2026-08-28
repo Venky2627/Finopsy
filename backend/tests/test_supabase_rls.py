@@ -80,6 +80,13 @@ def cleanup_user(user_id: str):
     )
 
 
+def _is_supabase_running() -> bool:
+    try:
+        r = requests.get(f"{API_URL}/auth/v1/health", timeout=1)
+        return r.status_code == 200
+    except Exception:
+        return False
+
 # ──────────────────────────────────────────────
 #  FIXTURES
 # ──────────────────────────────────────────────
@@ -87,6 +94,8 @@ def cleanup_user(user_id: str):
 @pytest.fixture(scope="module")
 def users():
     """Create two test users, yield their info, then clean up."""
+    if not _is_supabase_running():
+        pytest.skip("Local Supabase instance not running on 127.0.0.1:54321")
     user_a_data = create_user("user-a@test.finopsy.local", "password-a-secure-123")
     user_b_data = create_user("user-b@test.finopsy.local", "password-b-secure-456")
 
